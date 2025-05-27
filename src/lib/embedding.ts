@@ -3,6 +3,7 @@ import OpenAI from "openai";
 // 初始化 OpenAI 客户端
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
+  baseURL: process.env.OPENAI_BASE_URL,
 });
 
 /**

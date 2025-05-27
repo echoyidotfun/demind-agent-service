@@ -1,9 +1,9 @@
 import { Hono } from "hono";
 import { serve } from "@hono/node-server";
 import { cors } from "hono/cors";
-import { ToolRegistry } from "@mastra/core";
 import { setupDefiLlamaSyncCronJobs } from "./lib/cron/defiLlamaSyncTask";
-import { registerDefiLlamaTools } from "./agents/tools/defiLlama.tool";
+import { findHighYieldPools } from "./agents/tools/defiLlama.tool";
+import { DeFiLlamaSyncService } from "./services/defiLlamaSync.service";
 
 // 创建 Hono 应用
 const app = new Hono();
@@ -34,52 +34,6 @@ app.get("/health", (c) => c.json({ status: "ok" }));
 // API 路由分组
 const api = new Hono().basePath("/api/v1");
 
-// 手动执行数据同步路由（仅在开发环境使用，生产环境应使用定时任务）
-// 此路由应被身份验证和授权中间件保护
-import { DeFiLlamaSyncService } from "./services/defiLlamaSync.service";
-
-api.post("/sync/protocols", async (c) => {
-  try {
-    const syncService = new DeFiLlamaSyncService();
-    await syncService.syncProtocols();
-    return c.json({ success: true, message: "协议数据同步成功" });
-  } catch (error) {
-    console.error("同步失败:", error);
-    return c.json(
-      { success: false, message: "同步失败", error: String(error) },
-      500
-    );
-  }
-});
-
-api.post("/sync/pools", async (c) => {
-  try {
-    const syncService = new DeFiLlamaSyncService();
-    await syncService.syncPools();
-    return c.json({ success: true, message: "资金池数据同步成功" });
-  } catch (error) {
-    console.error("同步失败:", error);
-    return c.json(
-      { success: false, message: "同步失败", error: String(error) },
-      500
-    );
-  }
-});
-
-api.post("/sync/stablecoins", async (c) => {
-  try {
-    const syncService = new DeFiLlamaSyncService();
-    await syncService.syncStablecoins();
-    return c.json({ success: true, message: "稳定币数据同步成功" });
-  } catch (error) {
-    console.error("同步失败:", error);
-    return c.json(
-      { success: false, message: "同步失败", error: String(error) },
-      500
-    );
-  }
-});
-
 // 机会发现查询 API
 api.get("/opportunities/high-yield", async (c) => {
   const chain = c.req.query("chain");
@@ -88,12 +42,9 @@ api.get("/opportunities/high-yield", async (c) => {
   const limit = Math.min(Number(c.req.query("limit")) || 10, 100);
   const stablecoinOnly = c.req.query("stablecoinOnly") === "true";
 
-  // 这里手动调用工具逻辑，实际生产代码应考虑从 tools 复用逻辑或抽取到 service 层
+  // 直接调用业务逻辑函数
   try {
-    const { findHighYieldPools } = await import(
-      "./agents/tools/defiLlama.tool"
-    );
-    const result = await findHighYieldPools.handler({
+    const result = await findHighYieldPools({
       chain,
       minTvlUsd,
       minApy,
@@ -113,16 +64,25 @@ api.get("/opportunities/high-yield", async (c) => {
 // 将 API 路由挂载到主应用
 app.route("/", api);
 
-// 初始化 Mastra 工具注册表
-const toolRegistry = new ToolRegistry();
-registerDefiLlamaTools(toolRegistry);
-
 // 在开发环境下，服务启动时初始化应用
 if (process.env.NODE_ENV === "development") {
   // 启动定时任务
   setupDefiLlamaSyncCronJobs();
+  console.log("开发环境：已启动数据同步定时任务");
 
-  console.log("开发环境：已启动数据同步任务");
+  // 开发环境启动时，立即执行一次核心数据同步
+  (async () => {
+    console.log("开发环境：开始执行启动时数据同步...");
+    const syncService = new DeFiLlamaSyncService();
+    try {
+      await syncService.syncProtocols();
+      await syncService.syncPools();
+      // await syncService.syncStablecoins();
+      console.log("开发环境：启动时数据同步完成。");
+    } catch (error) {
+      console.error("开发环境：启动时数据同步失败:", error);
+    }
+  })();
 } else {
   // 生产环境逻辑
   console.log("生产环境：数据同步任务将由定时触发器管理");

@@ -1,109 +1,104 @@
 generator client {
-    provider        = "prisma-client-js"
-    previewFeatures = ["postgresqlExtensions", "fullTextSearch", "fullTextIndex"]
+  provider        = "prisma-client-js"
+  previewFeatures = ["fullTextSearchPostgres", "postgresqlExtensions"]
 }
 
 datasource db {
-    provider   = "postgresql"
-    url        = env("DATABASE_URL")
-    extensions = [pgvector(version: "0.5.0")]
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
 }
 
-// Protocol 数据模型
 model Protocol {
-    id          String   @id
-    name        String
-    slug        String   @unique
-    address     String?
-    symbol      String?
-    description String?
-    chain       String?
-    logo        String?
-    audits      String?
-    auditNote   String?
-    geckoId     String?
-    cmcId       String?
-    category    String?
-    chains      String[] // 存储为 JSON 数组
-    tvl         Float?
-    change1h    Float?   @map("change_1h")
-    change1d    Float?   @map("change_1d")
-    change7d    Float?   @map("change_7d")
-    mcap        Float?
-    twitter     String?
-    url         String?
-    createdAt   DateTime @default(now())
-    updatedAt   DateTime @updatedAt
+  id          String   @id
+  name        String
+  slug        String   @unique
+  address     String?
+  symbol      String?
+  description String?
+  chain       String?
+  logo        String?
+  audits      String?
+  category    String?
+  chains      String[]
+  tvl         Float?
+  change1h    Float?   @map("change_1h")
+  change1d    Float?   @map("change_1d")
+  change7d    Float?   @map("change_7d")
+  mcap        Float?
+  twitter     String?
+  url         String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @default(now()) @updatedAt
+  auditLinks  String[] @map("audit_links")
+  github      String?
+  pools       Pool[]
 
-    // 关系
-    pools Pool[]
-
-    // 向量化描述，用于语义搜索
-    descriptionVector Unsupported("vector(1536)")?
-
-    @@index([category])
-    @@index([slug])
+  @@index([category])
+  @@index([slug])
 }
 
-// 资金池数据模型
 model Pool {
-    id               String   @id
-    chain            String
-    project          String // 对应 protocol 的 slug
-    symbol           String
-    tvlUsd           Float
-    apyBase          Float?
-    apyReward        Float?
-    apy              Float?
-    rewardTokens     String? // 存储为 JSON
-    stablecoin       Boolean?
-    ilRisk           String?
-    exposure         String?
-    poolMeta         String?
-    underlyingTokens String? // 存储为 JSON
+  id           String      @id
+  chain        String
+  project      String
+  symbol       String
+  tvlUsd       Float
+  apyBase      Float?
+  apyReward    Float?
+  apy          Float?
+  rewardTokens String?
+  stablecoin   Boolean?
+  ilRisk       String?
+  exposure     String?
+  poolMeta     String?
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+  protocol     Protocol    @relation(fields: [project], references: [slug])
+  poolCharts   PoolChart[]
+  poolTokens   PoolToken[]
 
-    // 关系
-    protocol   Protocol    @relation(fields: [project], references: [slug])
-    poolCharts PoolChart[]
-
-    createdAt DateTime @default(now())
-    updatedAt DateTime @updatedAt
-
-    @@index([project])
-    @@index([chain])
-    @@index([apy])
+  @@index([project])
+  @@index([chain])
+  @@index([apy])
 }
 
-// 资金池历史数据
+model PoolToken {
+  id           String   @id @default(uuid())
+  poolId       String
+  tokenAddress String
+  chain        String
+  createdAt    DateTime @default(now())
+  pool         Pool     @relation(fields: [poolId], references: [id])
+
+  @@unique([poolId, tokenAddress])
+  @@index([tokenAddress])
+}
+
 model PoolChart {
-    id        String   @id @default(uuid())
-    poolId    String
-    timestamp DateTime
-    tvlUsd    Float
-    apy       Float?
-    apyBase   Float?
-    apyReward Float?
+  id        String   @id @default(uuid())
+  poolId    String
+  timestamp DateTime
+  tvlUsd    Float
+  apy       Float?
+  apyBase   Float?
+  apyReward Float?
+  pool      Pool     @relation(fields: [poolId], references: [id])
 
-    // 关系
-    pool Pool @relation(fields: [poolId], references: [id])
-
-    @@index([poolId, timestamp])
+  @@index([poolId, timestamp])
 }
 
-// 稳定币数据模型
 model Stablecoin {
-    id           String   @id
-    name         String
-    symbol       String
-    geckoId      String?
-    pegType      String
-    pegMechanism String?
-    circulating  Float // 当前流通量 (peggedUSD)
-    price        Float
-    chains       String[] // 存储为 JSON 数组
+  id           String   @id
+  name         String
+  symbol       String
+  geckoId      String?
+  pegType      String
+  pegMechanism String?
+  circulating  Float
+  price        Float
+  chains       String[]
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
-    createdAt DateTime @default(now())
-    updatedAt DateTime @updatedAt
-
-    @@index([symbol])
+  @@index([symbol])
 }

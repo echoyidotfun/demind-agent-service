@@ -27,6 +27,9 @@ export interface Protocol {
   mcap?: number;
   twitter?: string;
   url?: string;
+  deadFrom?: number; // 协议停止活跃的时间戳
+  audit_links?: string[]; // 审计链接列表
+  github?: string[]; // GitHub 仓库列表
 }
 
 export interface Pool {
