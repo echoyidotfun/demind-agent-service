@@ -1,14 +1,14 @@
 import { prisma } from "../lib/db/client";
 import { DeFiLlamaClient } from "../lib/apiClients/defiLlamaClient";
-import { redis } from "../lib/kv/client";
+import { redis } from "../lib/kv/redisClient";
 
 export class DeFiLlamaSyncService {
   private defiLlamaClient: DeFiLlamaClient;
-  private readonly BATCH_SIZE = 500; // 批量处理大小
+  private readonly BATCH_SIZE = 500; // Batch processing size
 
-  // 添加EVM兼容链白名单（全部使用小写）
+  // Whitelist of EVM compatible chains (all lowercase)
   private readonly EVM_CHAINS = new Set([
-    // 主流EVM兼容链
+    // Mainstream EVM compatible chains
     "ethereum",
     "bsc",
     "polygon",
@@ -41,7 +41,7 @@ export class DeFiLlamaSyncService {
     "sei",
     "swellchain",
     "taiko",
-    "multi-chain", // 保留Multi-Chain标记的协议
+    "multi-chain", // Keep protocols tagged with Multi-Chain
   ]);
 
   constructor() {
@@ -49,7 +49,7 @@ export class DeFiLlamaSyncService {
   }
 
   /**
-   * 将数组分成指定大小的批次
+   * Chunks an array into smaller arrays of a specified size.
    */
   private chunkArray<T>(array: T[], size: number): T[][] {
     const chunks: T[][] = [];
@@ -60,15 +60,15 @@ export class DeFiLlamaSyncService {
   }
 
   /**
-   * 检查协议是否支持至少一个EVM兼容链
+   * Checks if the protocol supports at least one EVM compatible chain.
    */
   private isEVMCompatible(protocol: any): boolean {
-    // 如果chain字段是EVM兼容链 (忽略大小写)
+    // If the chain field is an EVM compatible chain (case-insensitive)
     if (protocol.chain && this.EVM_CHAINS.has(protocol.chain.toLowerCase())) {
       return true;
     }
 
-    // 如果chains数组中包含至少一个EVM兼容链
+    // If the chains array contains at least one EVM compatible chain
     if (
       protocol.chains &&
       Array.isArray(protocol.chains) &&
@@ -83,7 +83,7 @@ export class DeFiLlamaSyncService {
   }
 
   async syncProtocols() {
-    console.log("开始同步 DeFi 协议数据...");
+    console.log("Starting DeFi protocol data synchronization...");
     let successCount = 0;
     let errorCount = 0;
     let skippedInactiveCount = 0;
@@ -95,36 +95,38 @@ export class DeFiLlamaSyncService {
     try {
       const protocols = await this.defiLlamaClient.getProtocols();
       protocolsFromApi = protocols.length;
-      console.log(`从 API 获取到 ${protocolsFromApi} 个协议，准备批量处理...`);
+      console.log(
+        `Fetched ${protocolsFromApi} protocols from API, preparing for batch processing...`
+      );
 
       if (protocolsFromApi === 0) {
-        console.log("没有从 API 获取到协议数据，跳过同步。");
+        console.log("No protocol data fetched from API, skipping sync.");
         return;
       }
 
-      // 过滤掉非活跃协议并处理字段
+      // Filter out inactive protocols and process fields
       const activeProtocols = protocols.filter(
         (protocol) => !protocol.deadFrom
       );
       console.log(
-        `过滤后剩余 ${activeProtocols.length} 个活跃协议，${
+        `Filtered to ${activeProtocols.length} active protocols. ${
           protocols.length - activeProtocols.length
-        } 个非活跃协议将被跳过。`
+        } inactive protocols will be skipped.`
       );
       skippedInactiveCount = protocols.length - activeProtocols.length;
 
-      // 进一步过滤，只保留EVM兼容链的协议
+      // Further filter to keep only EVM compatible protocols
       const evmProtocols = activeProtocols.filter((protocol) =>
         this.isEVMCompatible(protocol)
       );
       console.log(
-        `进一步过滤后剩余 ${evmProtocols.length} 个EVM兼容协议，${
+        `Further filtered to ${evmProtocols.length} EVM compatible protocols. ${
           activeProtocols.length - evmProtocols.length
-        } 个非EVM协议将被跳过。`
+        } non-EVM protocols will be skipped.`
       );
       skippedNonEVMCount = activeProtocols.length - evmProtocols.length;
 
-      // 获取所有已存在的协议ID，用于判断是新增还是更新
+      // Get all existing protocol IDs to determine new vs. update
       const existingProtocolIds = new Set(
         (
           await prisma.protocol.findMany({
@@ -133,23 +135,25 @@ export class DeFiLlamaSyncService {
         ).map((p) => p.id)
       );
 
-      console.log(`数据库中已存在 ${existingProtocolIds.size} 个协议记录`);
+      console.log(
+        `Found ${existingProtocolIds.size} protocol records already in the database.`
+      );
 
-      // 将协议数据分批处理
+      // Batch process protocol data
       const protocolChunks = this.chunkArray(evmProtocols, this.BATCH_SIZE);
       console.log(
-        `将 ${evmProtocols.length} 个EVM兼容协议分为 ${protocolChunks.length} 批进行处理`
+        `Processing ${evmProtocols.length} EVM compatible protocols in ${protocolChunks.length} batches.`
       );
 
       for (let i = 0; i < protocolChunks.length; i++) {
         const chunk = protocolChunks[i];
         console.log(
-          `处理第 ${i + 1}/${protocolChunks.length} 批协议数据 (${
-            chunk.length
-          } 个协议)...`
+          `Processing batch ${i + 1}/${
+            protocolChunks.length
+          } of protocol data (${chunk.length} protocols)...`
         );
 
-        // 分离新增协议和已存在协议
+        // Separate new and existing protocols
         const newProtocols = chunk.filter(
           (p) => !existingProtocolIds.has(p.id)
         );
@@ -157,21 +161,21 @@ export class DeFiLlamaSyncService {
           existingProtocolIds.has(p.id)
         );
 
-        // 处理新协议 - 插入全部字段
+        // Process new protocols - insert all fields
         if (newProtocols.length > 0) {
           const createOperations = newProtocols.map((protocol) => {
-            // 处理地址字段，如果是 chain:address 格式则提取实际地址部分
+            // Process address field, extract actual address if in chain:address format
             let processedAddress = protocol.address;
             if (protocol.address && protocol.address.includes(":")) {
               processedAddress = protocol.address.split(":")[1];
             }
 
-            // 处理chain字段，转换为小写
+            // Process chain field, convert to lowercase
             const chainValue = protocol.chain
               ? protocol.chain.toLowerCase()
               : null;
 
-            // 处理chains数组，转换为小写
+            // Process chains array, convert to lowercase
             const chainsArray = protocol.chains
               ? protocol.chains.map((chain: string) => chain.toLowerCase())
               : [];
@@ -203,45 +207,45 @@ export class DeFiLlamaSyncService {
           });
 
           try {
-            // 将新建操作包装在一个事务中
+            // Wrap create operations in a transaction
             const results = await prisma.$transaction(createOperations);
             successCount += results.length;
             newCount += results.length;
           } catch (transactionError) {
             errorCount += newProtocols.length;
             console.error(
-              `第 ${i + 1} 批新增协议数据事务写入失败:`,
+              `Transaction write failed for new protocols batch ${i + 1}:`,
               transactionError
             );
           }
         }
 
-        // 处理已存在协议 - 只更新动态字段
+        // Process existing protocols - only update dynamic fields
         if (existingProtocols.length > 0) {
           const updateOperations = existingProtocols.map((protocol) => {
             return prisma.protocol.update({
               where: { id: protocol.id },
               data: {
-                // 只更新动态数据字段
+                // Only update dynamic data fields
                 tvl: protocol.tvl ?? null,
                 change1h: protocol.change_1h ?? null,
                 change1d: protocol.change_1d ?? null,
                 change7d: protocol.change_7d ?? null,
                 mcap: protocol.mcap ?? null,
-                updatedAt: new Date(), // 更新时间戳
+                updatedAt: new Date(), // Update timestamp
               },
             });
           });
 
           try {
-            // 将更新操作包装在一个事务中
+            // Wrap update operations in a transaction
             const results = await prisma.$transaction(updateOperations);
             successCount += results.length;
             updatedCount += results.length;
           } catch (transactionError) {
             errorCount += existingProtocols.length;
             console.error(
-              `第 ${i + 1} 批更新协议数据事务写入失败:`,
+              `Transaction write failed for updating protocols batch ${i + 1}:`,
               transactionError
             );
           }
@@ -250,60 +254,37 @@ export class DeFiLlamaSyncService {
 
       if (errorCount > 0) {
         console.warn(
-          `DeFi 协议数据同步部分完成: ${successCount} 个成功 (${newCount} 个新增, ${updatedCount} 个更新), ${errorCount} 个失败, ${skippedInactiveCount} 个非活跃协议被跳过, ${skippedNonEVMCount} 个非EVM协议被跳过 (总共 ${protocolsFromApi} 个).`
+          `DeFi protocol data sync partially completed: ${successCount} succeeded (${newCount} new, ${updatedCount} updated), ${errorCount} failed, ${skippedInactiveCount} inactive protocols skipped, ${skippedNonEVMCount} non-EVM protocols skipped (total ${protocolsFromApi}).`
         );
-        // 如果全部失败，则抛出异常
+        // If all failed, throw an exception
         if (successCount === 0) {
           throw new Error(
-            `所有协议数据同步均失败 (${errorCount}/${evmProtocols.length})`
+            `All protocol data sync operations failed (${errorCount}/${evmProtocols.length})`
           );
         }
       } else {
         console.log(
-          `DeFi 协议数据同步完成: ${successCount} 个协议已成功处理 (${newCount} 个新增, ${updatedCount} 个更新), ${skippedInactiveCount} 个非活跃协议被跳过, ${skippedNonEVMCount} 个非EVM协议被跳过.`
+          `DeFi protocol data sync completed: ${successCount} protocols processed successfully (${newCount} new, ${updatedCount} updated), ${skippedInactiveCount} inactive protocols skipped, ${skippedNonEVMCount} non-EVM protocols skipped.`
         );
       }
     } catch (apiError) {
-      console.error("从 DeFiLlama API 获取协议数据失败:", apiError);
-      throw apiError; // 重新抛出以便调用者知道
+      console.error(
+        "Failed to fetch protocol data from DeFiLlama API:",
+        apiError
+      );
+      throw apiError; // Re-throw for the caller
     }
 
-    // 尝试更新 Redis 缓存，即使部分数据库写入失败
-    if (successCount > 0) {
-      try {
-        const protocolsForCache = await prisma.protocol.findMany({
-          select: {
-            id: true,
-            name: true,
-            slug: true,
-            tvl: true,
-            category: true,
-          },
-        });
-        await redis.set(
-          "defillama:protocols:list",
-          JSON.stringify(protocolsForCache),
-          { ex: 3600 }
-        );
-        console.log(
-          `协议列表已成功更新到 Redis 缓存 (${protocolsForCache.length} 个).`
-        );
-      } catch (redisError) {
-        console.error("更新 Redis 缓存 (protocols:list) 失败:", redisError);
-        // Redis 缓存失败不应阻止整个同步流程
-      }
-    }
-
-    // 如果所有操作都失败，则抛出异常
+    // If all operations failed, throw an exception
     if (errorCount === protocolsFromApi && protocolsFromApi > 0) {
       throw new Error(
-        `所有协议数据写入操作均失败 (${errorCount}/${protocolsFromApi})`
+        `All protocol data write operations failed (${errorCount}/${protocolsFromApi})`
       );
     }
   }
 
   async syncPools() {
-    console.log("开始同步资金池数据...");
+    console.log("Starting pool data synchronization...");
     let successCount = 0;
     let errorCount = 0;
     let skippedCount = 0;
@@ -313,7 +294,7 @@ export class DeFiLlamaSyncService {
     let newCount = 0;
 
     try {
-      // 首先获取所有已存在的协议 slug，用于验证外键约束
+      // First, get all existing protocol slugs for foreign key constraint validation
       const existingProtocolSlugs = await prisma.protocol.findMany({
         select: {
           slug: true,
@@ -323,10 +304,10 @@ export class DeFiLlamaSyncService {
         existingProtocolSlugs.map((protocol) => protocol.slug)
       );
       console.log(
-        `从数据库获取到 ${validProtocolSlugs.size} 个有效协议 slug，用于外键验证。`
+        `Fetched ${validProtocolSlugs.size} valid protocol slugs from database for foreign key validation.`
       );
 
-      // 获取所有已存在的资金池ID，用于判断是新增还是更新
+      // Get all existing pool IDs to determine new vs. update
       const existingPoolIds = new Set(
         (
           await prisma.pool.findMany({
@@ -334,18 +315,22 @@ export class DeFiLlamaSyncService {
           })
         ).map((p) => p.id)
       );
-      console.log(`数据库中已存在 ${existingPoolIds.size} 个资金池记录`);
+      console.log(
+        `Found ${existingPoolIds.size} pool records already in the database.`
+      );
 
       const pools = await this.defiLlamaClient.getPools();
       poolsFromApi = pools.length;
-      console.log(`从 API 获取到 ${poolsFromApi} 个资金池，准备批量处理...`);
+      console.log(
+        `Fetched ${poolsFromApi} pools from API, preparing for batch processing...`
+      );
 
       if (poolsFromApi === 0) {
-        console.log("没有从 API 获取到资金池数据，跳过同步。");
+        console.log("No pool data fetched from API, skipping sync.");
         return;
       }
 
-      // 筛选有效的资金池（协议存在于数据库中）
+      // Filter valid pools (protocol exists in DB)
       const validPools = pools.filter((pool) =>
         validProtocolSlugs.has(pool.project)
       );
@@ -355,40 +340,40 @@ export class DeFiLlamaSyncService {
       skippedCount = invalidPools.length;
 
       console.log(
-        `筛选后: ${validPools.length} 个有效资金池，${skippedCount} 个因协议不存在而跳过。`
+        `Filtered: ${validPools.length} valid pools, ${skippedCount} skipped due to non-existent protocol.`
       );
 
-      // 进一步过滤，只保留EVM兼容链的资金池（忽略大小写）
+      // Further filter to keep only EVM compatible pools (case-insensitive)
       const evmPools = validPools.filter((pool) =>
         this.EVM_CHAINS.has(pool.chain.toLowerCase())
       );
       skippedNonEVMCount = validPools.length - evmPools.length;
       console.log(
-        `进一步过滤后: ${evmPools.length} 个EVM兼容资金池，${skippedNonEVMCount} 个非EVM资金池被跳过。`
+        `Further filtered: ${evmPools.length} EVM compatible pools, ${skippedNonEVMCount} non-EVM pools skipped.`
       );
 
-      // 将有效资金池分批处理
+      // Batch process valid pools
       const poolChunks = this.chunkArray(evmPools, this.BATCH_SIZE);
       console.log(
-        `将 ${evmPools.length} 个有效资金池分为 ${poolChunks.length} 批进行处理`
+        `Processing ${evmPools.length} valid pools in ${poolChunks.length} batches.`
       );
 
       for (let i = 0; i < poolChunks.length; i++) {
         const chunk = poolChunks[i];
         console.log(
-          `处理第 ${i + 1}/${poolChunks.length} 批资金池数据 (${
+          `Processing batch ${i + 1}/${poolChunks.length} of pool data (${
             chunk.length
-          } 个资金池)...`
+          } pools)...`
         );
 
-        // 分离新增资金池和已存在资金池
+        // Separate new and existing pools
         const newPools = chunk.filter((p) => !existingPoolIds.has(p.pool));
         const existingPools = chunk.filter((p) => existingPoolIds.has(p.pool));
 
-        // 处理新增资金池 - 批量插入资金池和关联token
+        // Process new pools - batch insert pools and associated tokens
         if (newPools.length > 0) {
           try {
-            // 1. 批量创建资金池
+            // 1. Batch create pools
             const poolCreateData = newPools.map((pool) => ({
               id: pool.pool,
               chain: pool.chain.toLowerCase(),
@@ -407,7 +392,7 @@ export class DeFiLlamaSyncService {
               poolMeta: pool.poolMeta,
             }));
 
-            // 批量创建资金池
+            // Batch create pools
             await prisma.$transaction(async (prismaClient) => {
               await prismaClient.pool.createMany({
                 data: poolCreateData,
@@ -415,7 +400,7 @@ export class DeFiLlamaSyncService {
               });
             });
 
-            // 2. 收集所有需要创建的PoolToken记录
+            // 2. Collect all PoolToken records to create
             const allPoolTokensToCreate: {
               poolId: string;
               tokenAddress: string;
@@ -428,7 +413,7 @@ export class DeFiLlamaSyncService {
                 pool.underlyingTokens.length > 0
               ) {
                 pool.underlyingTokens.forEach((tokenAddress) => {
-                  // 确保tokenAddress是有效的非空字符串
+                  // Ensure tokenAddress is a valid non-empty string
                   if (
                     tokenAddress &&
                     typeof tokenAddress === "string" &&
@@ -436,37 +421,39 @@ export class DeFiLlamaSyncService {
                   ) {
                     allPoolTokensToCreate.push({
                       poolId: pool.pool,
-                      tokenAddress: tokenAddress.trim(), // 去除可能的空格
+                      tokenAddress: tokenAddress.trim(), // Trim whitespace
                       chain: pool.chain.toLowerCase(),
                     });
                   } else {
                     console.warn(
-                      `跳过无效的tokenAddress: ${tokenAddress}，对应资金池ID: ${pool.pool}`
+                      `Skipping invalid tokenAddress: ${tokenAddress} for pool ID: ${pool.pool}`
                     );
                   }
                 });
               }
             });
 
-            // 3. 如果有token记录需要创建，批量创建
+            // 3. If there are token records to create, batch create them
             if (allPoolTokensToCreate.length > 0) {
               console.log(
-                `批量创建 ${allPoolTokensToCreate.length} 个底层代币关联记录`
+                `Batch creating ${allPoolTokensToCreate.length} underlying token association records.`
               );
 
-              // 校验每条记录是否包含所有必需字段
+              // Validate each record for required fields
               const validRecords = allPoolTokensToCreate.filter((record) => {
                 const isValid =
                   record.poolId && record.tokenAddress && record.chain;
                 if (!isValid) {
-                  console.warn(`发现无效记录: ${JSON.stringify(record)}`);
+                  console.warn(
+                    `Found invalid record: ${JSON.stringify(record)}`
+                  );
                 }
                 return isValid;
               });
 
-              console.log(`过滤后有 ${validRecords.length} 条有效记录`);
+              console.log(`Filtered to ${validRecords.length} valid records.`);
 
-              // 分批处理token创建，避免一次性处理过多记录
+              // Batch process token creation to avoid too many records at once
               const tokenBatchSize = 1000;
               const tokenBatches = this.chunkArray(
                 validRecords,
@@ -480,19 +467,21 @@ export class DeFiLlamaSyncService {
                     skipDuplicates: true,
                   });
                 } catch (error) {
-                  console.error(`创建PoolToken批次失败:`, error);
+                  console.error(`Failed to create PoolToken batch:`, error);
 
-                  // 尝试逐个创建以隔离问题记录
+                  // Try creating one by one to isolate the problematic record
                   if (tokenBatch.length < 50) {
                     console.log(
-                      `尝试逐个创建${tokenBatch.length}个记录以识别问题...`
+                      `Attempting to create ${tokenBatch.length} records one by one to identify the issue...`
                     );
                     for (const record of tokenBatch) {
                       try {
                         await prisma.poolToken.create({ data: record });
                       } catch (singleError) {
                         console.error(
-                          `单条记录创建失败: ${JSON.stringify(record)}`,
+                          `Failed to create single record: ${JSON.stringify(
+                            record
+                          )}`,
                           singleError
                         );
                       }
@@ -507,16 +496,16 @@ export class DeFiLlamaSyncService {
           } catch (transactionError) {
             errorCount += newPools.length;
             console.error(
-              `第 ${i + 1} 批新增资金池数据批量写入失败:`,
+              `Batch write failed for new pools batch ${i + 1}:`,
               transactionError
             );
           }
         }
 
-        // 处理已存在资金池 - 只更新动态字段（tvl和apy相关），不更新底层代币
+        // Process existing pools - only update dynamic fields (TVL and APY related), not underlying tokens
         if (existingPools.length > 0) {
           try {
-            // 批量更新资金池基本信息
+            // Batch update pool basic info
             const updateOperations = existingPools.map((pool) =>
               prisma.pool.update({
                 where: { id: pool.pool },
@@ -530,14 +519,14 @@ export class DeFiLlamaSyncService {
               })
             );
 
-            // 将更新操作包装在一个事务中
+            // Wrap update operations in a transaction
             await prisma.$transaction(updateOperations);
             successCount += existingPools.length;
             updatedCount += existingPools.length;
           } catch (transactionError) {
             errorCount += existingPools.length;
             console.error(
-              `第 ${i + 1} 批更新资金池数据事务写入失败:`,
+              `Transaction write failed for updating pools batch ${i + 1}:`,
               transactionError
             );
           }
@@ -546,7 +535,7 @@ export class DeFiLlamaSyncService {
 
       if (invalidPools.length > 0) {
         console.warn(
-          `跳过了 ${invalidPools.length} 个资金池，因为它们的协议 (project) 在数据库中不存在:`
+          `Skipped ${invalidPools.length} pools because their protocol (project) does not exist in the database:`
         );
         const groupedByProject: Record<string, number> = {};
         invalidPools.forEach((pool) => {
@@ -558,23 +547,23 @@ export class DeFiLlamaSyncService {
 
         Object.entries(groupedByProject)
           .sort((a, b) => b[1] - a[1])
-          .slice(0, 10) // 只显示前10个最常见的缺失协议
+          .slice(0, 10) // Show only top 10 most common missing protocols
           .forEach(([project, count]) => {
-            console.warn(`  - 协议 "${project}" 缺失: ${count} 个资金池`);
+            console.warn(`  - Protocol "${project}" missing: ${count} pools`);
           });
       }
 
       if (errorCount > 0) {
         console.warn(
-          `资金池数据同步部分完成: ${successCount} 个成功 (${newCount} 个新增, ${updatedCount} 个更新), ${errorCount} 个失败, ${skippedCount} 个跳过, ${skippedNonEVMCount} 个非EVM链跳过 (总共 ${poolsFromApi} 个).`
+          `Pool data sync partially completed: ${successCount} succeeded (${newCount} new, ${updatedCount} updated), ${errorCount} failed, ${skippedCount} skipped, ${skippedNonEVMCount} non-EVM chain skipped (total ${poolsFromApi}).`
         );
       } else {
         console.log(
-          `资金池数据同步完成: ${successCount} 个资金池已成功处理 (${newCount} 个新增, ${updatedCount} 个更新), ${skippedCount} 个因协议缺失跳过, ${skippedNonEVMCount} 个因非EVM链跳过.`
+          `Pool data sync completed: ${successCount} pools processed successfully (${newCount} new, ${updatedCount} updated), ${skippedCount} skipped due to missing protocol, ${skippedNonEVMCount} skipped due to non-EVM chain.`
         );
       }
     } catch (apiError) {
-      console.error("从 DeFiLlama API 获取资金池数据失败:", apiError);
+      console.error("Failed to fetch pool data from DeFiLlama API:", apiError);
       throw apiError;
     }
 
@@ -599,20 +588,23 @@ export class DeFiLlamaSyncService {
           { ex: 3600 }
         );
         console.log(
-          `高收益资金池列表已成功更新到 Redis 缓存 (${highYieldPools.length} 个).`
+          `High-yield pools list successfully updated in Redis cache (${highYieldPools.length}).`
         );
       } catch (redisError) {
-        console.error("更新 Redis 缓存 (pools:high-yield) 失败:", redisError);
+        console.error(
+          "Failed to update Redis cache (pools:high-yield):",
+          redisError
+        );
       }
     }
 
-    // 如果所有操作都失败且有资金池需要处理，则抛出异常
+    // If all operations failed and there were pools to process, throw an exception
     if (
       errorCount === poolsFromApi - skippedCount - skippedNonEVMCount &&
       poolsFromApi - skippedCount - skippedNonEVMCount > 0
     ) {
       throw new Error(
-        `所有资金池数据写入操作均失败 (${errorCount}/${
+        `All pool data write operations failed (${errorCount}/${
           poolsFromApi - skippedCount - skippedNonEVMCount
         })`
       );
@@ -620,7 +612,7 @@ export class DeFiLlamaSyncService {
   }
 
   async syncStablecoins() {
-    console.log("开始同步稳定币数据...");
+    console.log("Starting stablecoin data synchronization...");
     let successCount = 0;
     let errorCount = 0;
     let stablecoinsFromApi = 0;
@@ -629,30 +621,30 @@ export class DeFiLlamaSyncService {
       const stablecoins = await this.defiLlamaClient.getStablecoins();
       stablecoinsFromApi = stablecoins.length;
       console.log(
-        `从 API 获取到 ${stablecoinsFromApi} 个稳定币，准备批量处理...`
+        `Fetched ${stablecoinsFromApi} stablecoins from API, preparing for batch processing...`
       );
 
       if (stablecoinsFromApi === 0) {
-        console.log("没有从 API 获取到稳定币数据，跳过同步。");
+        console.log("No stablecoin data fetched from API, skipping sync.");
         return;
       }
 
-      // 将稳定币数据分批处理
+      // Batch process stablecoin data
       const stablecoinChunks = this.chunkArray(stablecoins, this.BATCH_SIZE);
       console.log(
-        `将 ${stablecoinsFromApi} 个稳定币分为 ${stablecoinChunks.length} 批进行处理`
+        `Processing ${stablecoinsFromApi} stablecoins in ${stablecoinChunks.length} batches.`
       );
 
       for (let i = 0; i < stablecoinChunks.length; i++) {
         const chunk = stablecoinChunks[i];
         console.log(
-          `处理第 ${i + 1}/${stablecoinChunks.length} 批稳定币数据 (${
-            chunk.length
-          } 个稳定币)...`
+          `Processing batch ${i + 1}/${
+            stablecoinChunks.length
+          } of stablecoin data (${chunk.length} stablecoins)...`
         );
 
         const upsertOperations = chunk.map((coin) => {
-          // 处理chains数组，转换为小写
+          // Process chains array, convert to lowercase
           const chainsArray = coin.chains
             ? coin.chains.map((chain: string) => chain.toLowerCase())
             : [];
@@ -680,89 +672,74 @@ export class DeFiLlamaSyncService {
         } catch (transactionError) {
           errorCount += chunk.length;
           console.error(
-            `第 ${i + 1} 批稳定币数据事务写入失败:`,
+            `Transaction write failed for stablecoins batch ${i + 1}:`,
             transactionError
           );
-          // 继续处理下一批
+          // Continue to next batch
         }
       }
 
       if (errorCount > 0) {
         console.warn(
-          `稳定币数据同步部分完成: ${successCount} 个成功, ${errorCount} 个失败 (总共 ${stablecoinsFromApi} 个).`
+          `Stablecoin data sync partially completed: ${successCount} succeeded, ${errorCount} failed (total ${stablecoinsFromApi}).`
         );
       } else {
-        console.log(`稳定币数据同步完成: ${successCount} 个稳定币已成功同步.`);
+        console.log(
+          `Stablecoin data sync completed: ${successCount} stablecoins successfully synced.`
+        );
       }
     } catch (apiError) {
-      console.error("从 DeFiLlama API 获取稳定币数据失败:", apiError);
+      console.error(
+        "Failed to fetch stablecoin data from DeFiLlama API:",
+        apiError
+      );
       throw apiError;
     }
 
-    if (successCount > 0) {
-      try {
-        const stablecoinsForCache = await prisma.stablecoin.findMany({
-          select: {
-            id: true,
-            name: true,
-            symbol: true,
-            circulating: true,
-            price: true,
-          },
-        });
-        await redis.set(
-          "defillama:stablecoins:list",
-          JSON.stringify(stablecoinsForCache),
-          { ex: 3600 }
-        );
-        console.log(
-          `稳定币列表已成功更新到 Redis 缓存 (${stablecoinsForCache.length} 个).`
-        );
-      } catch (redisError) {
-        console.error("更新 Redis 缓存 (stablecoins:list) 失败:", redisError);
-      }
-    }
-
-    // 如果所有操作都失败，则抛出异常
+    // If all operations failed, throw an exception
     if (errorCount === stablecoinsFromApi && stablecoinsFromApi > 0) {
       throw new Error(
-        `所有稳定币数据写入操作均失败 (${errorCount}/${stablecoinsFromApi})`
+        `All stablecoin data write operations failed (${errorCount}/${stablecoinsFromApi})`
       );
     }
   }
 
   async syncPoolChart(poolId: string) {
-    console.log(`开始同步资金池 ${poolId} 的历史数据...`);
+    console.log(
+      `Starting synchronization of historical data for pool ${poolId}...`
+    );
     let successCount = 0;
     let errorCount = 0;
     let chartDataLength = 0;
     let filteredDataLength = 0;
 
     try {
-      // 计算7天前的日期作为截止点
+      // Calculate date 7 days ago as cut-off
       const sevenDaysAgo = new Date();
       sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-      console.log(`将只保留 ${sevenDaysAgo.toISOString()} 之后的数据`);
+      console.log(`Will only keep data after ${sevenDaysAgo.toISOString()}`);
 
       const chartData = await this.defiLlamaClient.getPoolChart(poolId);
       chartDataLength = chartData.length;
 
       if (chartDataLength === 0) {
-        console.log(`资金池 ${poolId} 没有历史图表数据，跳过同步。`);
+        console.log(
+          `No historical chart data for pool ${poolId}, skipping sync.`
+        );
         return;
       }
 
-      // 过滤只保留最近7天的数据
+      // Filter to keep only the last 7 days of data
       const recentChartData = chartData.filter(
         (point) => new Date(point.timestamp) >= sevenDaysAgo
       );
       filteredDataLength = recentChartData.length;
 
       console.log(
-        `获取到 ${chartDataLength} 个历史数据点，过滤后保留 ${filteredDataLength} 个近7日数据点`
+        `Fetched ${chartDataLength} historical data points, filtered to ${filteredDataLength} recent (last 7 days) data points.`
       );
 
-      // 删除该池子7天前的旧数据
+      // Delete old data for this pool older than 7 days
       const deletedOldData = await prisma.poolChart.deleteMany({
         where: {
           poolId,
@@ -770,18 +747,20 @@ export class DeFiLlamaSyncService {
         },
       });
 
-      console.log(`已删除 ${deletedOldData.count} 条7天前的旧数据`);
-
-      // 分批处理历史数据
-      const chartDataChunks = this.chunkArray(recentChartData, 100);
       console.log(
-        `将 ${filteredDataLength} 个近期历史数据点分为 ${chartDataChunks.length} 批进行处理`
+        `Deleted ${deletedOldData.count} old data points (older than 7 days).`
+      );
+
+      // Batch process historical data
+      const chartDataChunks = this.chunkArray(recentChartData, 100); // Smaller chunk for chart data
+      console.log(
+        `Processing ${filteredDataLength} recent historical data points in ${chartDataChunks.length} batches.`
       );
 
       for (let i = 0; i < chartDataChunks.length; i++) {
         const chunk = chartDataChunks[i];
         try {
-          // 使用批量创建代替逐条创建
+          // Use batch create instead of one by one
           const createManyResult = await prisma.poolChart.createMany({
             data: chunk.map((point) => ({
               poolId,
@@ -791,16 +770,16 @@ export class DeFiLlamaSyncService {
               apyBase: point.apyBase,
               apyReward: point.apyReward,
             })),
-            skipDuplicates: true,
+            skipDuplicates: true, // Skip if a record with the same poolId and timestamp already exists
           });
 
           successCount += createManyResult.count;
         } catch (dbError) {
           errorCount += chunk.length;
           console.error(
-            `资金池 ${poolId} 的历史数据批次 ${i + 1}/${
+            `Failed to write batch ${i + 1}/${
               chartDataChunks.length
-            } 写入失败: `,
+            } of historical data for pool ${poolId}: `,
             dbError
           );
         }
@@ -808,101 +787,117 @@ export class DeFiLlamaSyncService {
 
       if (errorCount > 0) {
         console.warn(
-          `资金池 ${poolId} 历史数据同步部分完成: ${successCount} 个成功 (来自 ${filteredDataLength} 个近7日数据点), ${errorCount} 个失败.`
+          `Historical data sync for pool ${poolId} partially completed: ${successCount} succeeded (from ${filteredDataLength} recent data points), ${errorCount} failed.`
         );
       } else {
         console.log(
-          `资金池 ${poolId} 历史数据同步完成: ${successCount} 个数据点已同步 (来自 ${filteredDataLength} 个近7日数据点).`
+          `Historical data sync for pool ${poolId} completed: ${successCount} data points synced (from ${filteredDataLength} recent data points).`
         );
       }
 
       try {
-        // 保存到Redis也只保存近7天数据
+        // Save only recent 7 days data to Redis
         await redis.set(
           `defillama:poolchart:${poolId}`,
           JSON.stringify(recentChartData),
-          { ex: 86400 }
+          { ex: 86400 } // Cache for 1 day
         );
-        console.log(`资金池 ${poolId} 近7日历史数据已成功更新到 Redis 缓存。`);
+        console.log(
+          `Recent 7 days historical data for pool ${poolId} successfully updated in Redis cache.`
+        );
       } catch (redisError) {
         console.error(
-          `更新资金池 ${poolId} 历史数据的 Redis 缓存失败:`,
+          `Failed to update Redis cache for historical data of pool ${poolId}:`,
           redisError
         );
       }
     } catch (error) {
-      console.error(`同步资金池 ${poolId} 历史数据失败 (整体错误):`, error);
-      // syncPoolChart 的错误不应阻止 syncAll 继续其他池子
+      console.error(
+        `Failed to sync historical data for pool ${poolId} (overall error):`,
+        error
+      );
+      // Errors in syncPoolChart should not stop syncAll from processing other pools
     }
   }
 
   async syncAll() {
-    console.log("--- 开始完整数据同步 ---");
+    console.log("--- Starting full data synchronization --- ");
     let protocolsSuccess = false;
     let poolsSuccess = false;
     let stablecoinsSuccess = false;
 
-    // 同步协议数据
+    // Sync protocol data
     try {
       await this.syncProtocols();
       protocolsSuccess = true;
     } catch (error) {
-      console.error("协议数据同步失败:", error);
-      // 继续执行后续步骤
+      console.error("Protocol data synchronization failed:", error);
+      // Continue to next steps
     }
 
-    // 同步资金池数据
+    // Sync pool data
     try {
       await this.syncPools();
       poolsSuccess = true;
     } catch (error) {
-      console.error("资金池数据同步失败:", error);
-      // 继续执行后续步骤
+      console.error("Pool data synchronization failed:", error);
+      // Continue to next steps
     }
 
-    // 同步稳定币数据
+    // Sync stablecoin data
     try {
       await this.syncStablecoins();
       stablecoinsSuccess = true;
     } catch (error) {
-      console.error("稳定币数据同步失败:", error);
-      // 继续执行后续步骤
+      console.error("Stablecoin data synchronization failed:", error);
+      // Continue to next steps
     }
 
     if (poolsSuccess) {
-      console.log("--- 开始同步重点池子历史数据 ---");
+      console.log("--- Starting historical data sync for priority pools --- ");
       let topPoolsToSync: { id: string }[] = [];
       try {
         topPoolsToSync = await prisma.pool.findMany({
           where: {
-            tvlUsd: { gt: 1_000_000 },
-            apy: { gt: 5 },
+            tvlUsd: { gt: 1_000_000 }, // Pools with TVL > $1M
+            apy: { gt: 5 }, // APY > 5%
           },
           orderBy: { apy: "desc" },
-          take: 10,
+          take: 10, // Sync top 10 such pools
           select: { id: true },
         });
-        console.log(`计划同步 ${topPoolsToSync.length} 个重点池子的历史数据.`);
+        console.log(
+          `Planning to sync historical data for ${topPoolsToSync.length} priority pools.`
+        );
       } catch (dbReadError) {
-        console.error("获取重点同步池列表失败:", dbReadError);
+        console.error(
+          "Failed to get list of priority pools for historical data sync:",
+          dbReadError
+        );
       }
 
       for (const pool of topPoolsToSync) {
         await this.syncPoolChart(pool.id);
       }
     } else {
-      console.log("跳过同步重点池子历史数据，因为资金池同步失败。");
+      console.log(
+        "Skipping historical data sync for priority pools because pool synchronization failed."
+      );
     }
 
-    // 输出同步结果摘要
-    console.log("--- 完整数据同步完成 ---");
-    console.log(`协议数据: ${protocolsSuccess ? "成功" : "失败"}`);
-    console.log(`资金池数据: ${poolsSuccess ? "成功" : "失败"}`);
-    console.log(`稳定币数据: ${stablecoinsSuccess ? "成功" : "失败"}`);
+    // Output sync result summary
+    console.log("--- Full data synchronization finished --- ");
+    console.log(
+      `Protocol Data Sync: ${protocolsSuccess ? "Success" : "Failed"}`
+    );
+    console.log(`Pool Data Sync: ${poolsSuccess ? "Success" : "Failed"}`);
+    console.log(
+      `Stablecoin Data Sync: ${stablecoinsSuccess ? "Success" : "Failed"}`
+    );
 
-    // 如果所有主要同步都失败，则返回错误状态
+    // If all major syncs failed, return an error status
     if (!protocolsSuccess && !poolsSuccess && !stablecoinsSuccess) {
-      throw new Error("所有主要数据同步任务均失败");
+      throw new Error("All major data synchronization tasks failed.");
     }
   }
 }

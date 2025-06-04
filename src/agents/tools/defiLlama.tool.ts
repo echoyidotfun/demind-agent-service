@@ -1,29 +1,29 @@
 import { createTool } from "@mastra/core/tools";
 import { prisma } from "../../lib/db/client";
-import { redis } from "../../lib/kv/client";
+import { redis } from "../../lib/kv/redisClient";
 import { z } from "zod";
 
-// 实现业务逻辑的函数
+// Implementation functions
 async function findHighYieldPoolsImpl(params: any) {
-  // 设置默认参数
+  // Set default parameters
   const chain = params.chain;
   const minTvlUsd = params.minTvlUsd || 10000;
   const minApy = params.minApy || 5;
   const limit = Math.min(params.limit || 10, 100);
   const stablecoinOnly = params.stablecoinOnly || false;
 
-  // 尝试从缓存获取
+  // Try to fetch from cache
   const cacheKey = `defillama:high-yield-pools:${
     chain || "all"
   }:${minTvlUsd}:${minApy}:${limit}:${stablecoinOnly}`;
   const cached = await redis.get(cacheKey, true);
 
   if (cached) {
-    // 直接返回Redis自动解析的数据
+    // Return Redis auto-parsed data directly
     return cached;
   }
 
-  // 构建查询
+  // Build query
   const whereClause: any = {
     tvlUsd: { gt: minTvlUsd },
     apy: { gt: minApy },
@@ -37,7 +37,7 @@ async function findHighYieldPoolsImpl(params: any) {
     whereClause.stablecoin = true;
   }
 
-  // 执行查询
+  // Execute query
   const pools = await prisma.pool.findMany({
     where: whereClause,
     orderBy: { apy: "desc" },
@@ -53,7 +53,7 @@ async function findHighYieldPoolsImpl(params: any) {
     },
   });
 
-  // 格式化结果
+  // Format results
   const result = pools.map((pool) => ({
     id: pool.id,
     chain: pool.chain,
@@ -70,8 +70,8 @@ async function findHighYieldPoolsImpl(params: any) {
     exposure: pool.exposure,
   }));
 
-  // 缓存结果 30 分钟
-  await redis.set(cacheKey, JSON.stringify(result), { ex: 1800 });
+  // Cache result for 2 hours
+  await redis.set(cacheKey, JSON.stringify(result), { ex: 60 * 60 * 2 });
 
   return result;
 }
@@ -83,13 +83,16 @@ async function searchProtocolsImpl(params: any) {
   const semanticQuery = params.semanticQuery;
   const limit = Math.min(params.limit || 10, 50);
 
-  // 如果有语义查询
+  // If there is a semantic query
   if (semanticQuery) {
-    // 向量搜索功能已移除，此处返回空数组
-    // 后续可以对接新的 RAG 向量数据库
+    // Vector search functionality has been removed, return an empty array here.
+    // Can connect to a new RAG vector database in the future.
+    console.warn(
+      "[searchProtocolsImpl] Semantic search is currently disabled. Returning empty results."
+    );
     return [];
   } else {
-    // 普通搜索（基于名称、类别、TVL）
+    // Normal search (based on name, category, TVL)
     const whereClause: any = {
       tvl: { gte: minTvl },
     };
@@ -126,16 +129,16 @@ async function searchProtocolsImpl(params: any) {
 async function getPoolHistoricalDataImpl(params: any) {
   const { poolId } = params;
 
-  // 尝试从缓存获取
+  // Try to fetch from cache
   const cacheKey = `defillama:poolchart:${poolId}`;
   const cached = await redis.get(cacheKey, true);
 
   if (cached) {
-    // 直接返回Redis自动解析的数据
+    // Return Redis auto-parsed data directly
     return cached;
   }
 
-  // 从数据库获取
+  // Fetch from database
   const chartData = await prisma.poolChart.findMany({
     where: { poolId },
     orderBy: { timestamp: "asc" },
@@ -148,89 +151,111 @@ async function getPoolHistoricalDataImpl(params: any) {
     },
   });
 
-  // 缓存结果 1 小时
+  // Cache result for 1 hour
   await redis.set(cacheKey, JSON.stringify(chartData), { ex: 3600 });
 
   return chartData;
 }
 
-// 高收益资金池查询工具 - 为Mastra提供
+// High-yield pools query tool
 export const findHighYieldPoolsTool = createTool({
   id: "findHighYieldPools",
-  description: `查找高收益的 DeFi 资金池，可以按链、最低 TVL、最低 APY 筛选。
-  返回按 APY 降序排序的资金池列表，包括项目名称、链、代币符号、TVL、APY 等信息。`,
+  description:
+    "Finds high-yield DeFi pools. Can be filtered by chain, minimum TVL, and minimum APY. Returns a list of pools sorted by APY in descending order, including project name, chain, token symbol, TVL, APY, etc.",
   inputSchema: z.object({
     chain: z
       .string()
       .optional()
-      .describe('可选, 指定区块链，例如 "Ethereum", "BSC", "Arbitrum" 等'),
+      .describe(
+        "Optional. Specify the blockchain, e.g., 'Ethereum', 'BSC', 'Arbitrum'."
+      ),
     minTvlUsd: z
       .number()
       .optional()
-      .describe("可选, 最低 TVL（美元），默认为 10000 ($10k)"),
-    minApy: z.number().optional().describe("可选, 最低 APY（%），默认为 5"),
+      .describe("Optional. Minimum TVL (USD), defaults to 10000 ($10k)."),
+    minApy: z
+      .number()
+      .optional()
+      .describe("Optional. Minimum APY (%), defaults to 5."),
     limit: z
       .number()
       .optional()
-      .describe("可选, 返回的结果数量，默认为 10，最大为 100"),
+      .describe(
+        "Optional. Number of results to return, defaults to 10, max 100."
+      ),
     stablecoinOnly: z
       .boolean()
       .optional()
-      .describe("可选, 是否只返回稳定币资金池，默认为 false"),
+      .describe(
+        "Optional. Whether to return only stablecoin pools, defaults to false."
+      ),
   }),
   execute: async ({ context }) => {
     return await findHighYieldPoolsImpl(context);
   },
 });
 
-// 为API调用导出函数
+// Export function for API calls
 export const findHighYieldPools = findHighYieldPoolsImpl;
 
-// 协议搜索工具 - 为Mastra提供
+// Protocol search tool - for Mastra
 export const searchProtocolsTool = createTool({
   id: "searchProtocols",
-  description: `搜索 DeFi 协议，可以按名称、类别、最低 TVL 筛选。
-  语义搜索功能当前已禁用，若提供 semanticQuery，将返回空结果。`,
+  description:
+    "Searches DeFi protocols. Can be filtered by name, category, and minimum TVL. Semantic search is currently disabled; if semanticQuery is provided, it will return empty results.",
   inputSchema: z.object({
-    nameQuery: z.string().optional().describe("可选，协议名称关键词"),
+    nameQuery: z
+      .string()
+      .optional()
+      .describe("Optional. Protocol name keyword."),
     category: z
       .string()
       .optional()
-      .describe('可选，协议类别，如 "Lending", "DEX", "Yield" 等'),
-    minTvl: z.number().optional().describe("可选，最低 TVL（美元），默认为 0"),
+      .describe(
+        "Optional. Protocol category, e.g., 'Lending', 'DEX', 'Yield'."
+      ),
+    minTvl: z
+      .number()
+      .optional()
+      .describe("Optional. Minimum TVL (USD), defaults to 0."),
     semanticQuery: z
       .string()
       .optional()
-      .describe("可选，语义搜索查询（当前已禁用，若提供将返回空结果）"),
+      .describe(
+        "Optional. Semantic search query (currently disabled, will return empty results if provided)."
+      ),
     limit: z
       .number()
       .optional()
-      .describe("可选，返回的结果数量，默认为 10，最大为 50"),
+      .describe(
+        "Optional. Number of results to return, defaults to 10, max 50."
+      ),
   }),
   execute: async ({ context }) => {
     return await searchProtocolsImpl(context);
   },
 });
 
-// 为API调用导出函数
+// Export function for API calls
 export const searchProtocols = searchProtocolsImpl;
 
-// 获取资金池历史数据工具 - 为Mastra提供
+// Pool historical data tool - for Mastra
 export const getPoolHistoricalDataTool = createTool({
   id: "getPoolHistoricalData",
-  description: `获取指定资金池的历史数据，包括 TVL 和 APY 的变化趋势。`,
+  description:
+    "Gets historical data for a specified pool, including TVL and APY trends.",
   inputSchema: z.object({
-    poolId: z.string().describe("资金池 ID"),
+    poolId: z.string().describe("The ID of the pool."),
   }),
   execute: async ({ context }) => {
     return await getPoolHistoricalDataImpl(context);
   },
 });
 
-// 为API调用导出函数
+// Export function for API calls
 export const getPoolHistoricalData = getPoolHistoricalDataImpl;
 
-// 导出所有工具，供Mastra注册使用
+// Export all tools for Mastra registration
 export const defiLlamaTools = [
   findHighYieldPoolsTool,
   searchProtocolsTool,

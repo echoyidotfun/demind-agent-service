@@ -102,3 +102,73 @@ model Stablecoin {
 
   @@index([symbol])
 }
+
+// CoinGecko data
+
+model CgCoinsIndex {
+  id        String   @id @map("cg_id") // CoinGecko 的代币 ID
+  symbol    String
+  name      String
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  platforms CgCoinPlatform[]
+  details   CgCoinDetails?
+
+  @@map("cg_coins_index")
+}
+
+model CgCoinPlatform {
+  id              Int    @id @default(autoincrement())
+  cgId            String @map("cg_id")
+  platformId      String @map("platform_id")
+  contractAddress String @map("contract_address")
+
+  coin CgCoinsIndex @relation(fields: [cgId], references: [id])
+
+  @@unique([cgId, platformId, contractAddress])
+  @@index([platformId, contractAddress])
+  @@map("cg_coin_platforms")
+}
+
+model CgCoinDetails {
+  cgId                         String    @id @map("cg_id")
+  name                         String
+  symbol                       String
+  assetPlatformId              String?   @map("asset_platform_id")
+  descriptionEn                String?   @map("description_en") @db.Text
+  imageThumbUrl                String?   @map("image_thumb_url")
+  imageSmallUrl                String?   @map("image_small_url")
+  imageLargeUrl                String?   @map("image_large_url")
+  categories                   Json?
+  linksHomepage                String?   @map("links_homepage")
+  linksWhitepaperUrl           String?   @map("links_whitepaper_url")
+  linksTwitterScreenName       String?   @map("links_twitter_screen_name")
+  linksTelegramChannelId       String?   @map("links_telegram_channel_identifier")
+  linksGithubRepos             String?   @map("links_github_repos")
+  marketCapRank                Int?      @map("market_cap_rank")
+  currentPriceUsd              Decimal?  @map("current_price_usd")
+  marketCapUsd                 Decimal?  @map("market_cap_usd")
+  fullyDilutedValuationUsd     Decimal?  @map("fully_diluted_valuation_usd")
+  totalVolumeUsd               Decimal?  @map("total_volume_usd")
+  athUsd                       Decimal?  @map("ath_usd")
+  athDateUsd                   DateTime? @map("ath_date_usd")
+  atlUsd                       Decimal?  @map("atl_usd")
+  atlDateUsd                   DateTime? @map("atl_date_usd")
+  circulatingSupply            Decimal?  @map("circulating_supply")
+  totalSupply                  Decimal?  @map("total_supply")
+  maxSupply                    Decimal?  @map("max_supply")
+  priceChangePercentage24hUsd  Decimal?  @map("price_change_percentage_24h_usd")
+  priceChangePercentage7dUsd   Decimal?  @map("price_change_percentage_7d_usd")
+  priceChangePercentage14dUsd  Decimal?  @map("price_change_percentage_14d_usd")
+  priceChangePercentage30dUsd  Decimal?  @map("price_change_percentage_30d_usd")
+  priceChangePercentage60dUsd  Decimal?  @map("price_change_percentage_60d_usd")
+  priceChangePercentage200dUsd Decimal?  @map("price_change_percentage_200d_usd")
+  priceChangePercentage1yUsd   Decimal?  @map("price_change_percentage_1y_usd")
+  cgLastUpdated                DateTime? @map("cg_last_updated")
+  dataFetchedAt                DateTime  @default(now()) @map("data_fetched_at")
+
+  coin CgCoinsIndex @relation(fields: [cgId], references: [id])
+
+  @@map("cg_coin_details")
+}

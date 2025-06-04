@@ -4,6 +4,7 @@ import { cors } from "hono/cors";
 import { setupDefiLlamaSyncCronJobs } from "./lib/cron/defiLlamaSyncTask";
 import { findHighYieldPools } from "./agents/tools/defiLlama.tool";
 import { DeFiLlamaSyncService } from "./services/defiLlamaSync.service";
+import { CoinGeckoService } from "./services/coingeckoSync.service";
 
 // 创建 Hono 应用
 const app = new Hono();
@@ -53,9 +54,9 @@ api.get("/opportunities/high-yield", async (c) => {
     });
     return c.json(result);
   } catch (error) {
-    console.error("查询高收益机会失败:", error);
+    console.error("Failed to query high-yield opportunities:", error);
     return c.json(
-      { success: false, message: "查询失败", error: String(error) },
+      { success: false, message: "Query failed", error: String(error) },
       500
     );
   }
@@ -68,29 +69,52 @@ app.route("/", api);
 if (process.env.NODE_ENV === "development") {
   // 启动定时任务
   setupDefiLlamaSyncCronJobs();
-  console.log("开发环境：已启动数据同步定时任务");
+  console.log("Development environment: Data sync cron jobs started.");
 
   // 开发环境启动时，立即执行一次核心数据同步
   (async () => {
-    console.log("开发环境：开始执行启动时数据同步...");
-    const syncService = new DeFiLlamaSyncService();
+    console.log("Development environment: Starting initial data sync...");
+
+    // DeFiLlama Sync
+    // const defiLlamaSyncService = new DeFiLlamaSyncService();
+    // try {
+    //   console.log("Development environment: Starting DeFiLlama data sync...");
+    //   await defiLlamaSyncService.syncProtocols();
+    //   await defiLlamaSyncService.syncPools();
+    //   // await defiLlamaSyncService.syncStablecoins();
+    //   console.log("Development environment: DeFiLlama data sync completed.");
+    // } catch (error) {
+    //   console.error(
+    //     "Development environment: DeFiLlama data sync failed:",
+    //     error
+    //   );
+    // }
+
+    // CoinGecko Sync
+    const coinGeckoService = new CoinGeckoService();
     try {
-      await syncService.syncProtocols();
-      await syncService.syncPools();
-      // await syncService.syncStablecoins();
-      console.log("开发环境：启动时数据同步完成。");
+      console.log("Development environment: Starting CoinGecko data sync...");
+      await coinGeckoService.syncCoinsListAndPlatforms();
+      await coinGeckoService.syncTrendingCoinsCacheAndDetails();
+      console.log("Development environment: CoinGecko data sync completed.");
     } catch (error) {
-      console.error("开发环境：启动时数据同步失败:", error);
+      console.error(
+        "Development environment: CoinGecko data sync failed:",
+        error
+      );
     }
+    console.log("Development environment: Initial data sync process finished.");
   })();
 } else {
   // 生产环境逻辑
-  console.log("生产环境：数据同步任务将由定时触发器管理");
+  console.log(
+    "Production environment: Data sync tasks will be managed by cron triggers."
+  );
 }
 
 // 启动服务器
 const port = process.env.PORT ? Number(process.env.PORT) : 3000;
-console.log(`服务器启动在端口 ${port}`);
+console.log(`Server starting on port ${port}`);
 
 serve(
   {

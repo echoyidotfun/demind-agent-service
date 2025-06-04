@@ -1,3 +1,5 @@
+import dotenv from "dotenv";
+dotenv.config();
 import OpenAI from "openai";
 
 // 初始化 OpenAI 客户端
@@ -14,13 +16,13 @@ const openai = new OpenAI({
 export async function getEmbedding(text: string): Promise<number[]> {
   try {
     const response = await openai.embeddings.create({
-      model: "text-embedding-ada-002", // 或最新的嵌入模型
+      model: "text-embedding-3-small", // 更新为text-embedding-3-small
       input: text.replace(/\n/g, " "), // 替换换行符以优化嵌入质量
     });
 
     return response.data[0].embedding;
   } catch (error) {
-    console.error("生成文本嵌入失败:", error);
+    console.error("OpenAI生成文本嵌入失败:", error);
     throw error;
   }
 }

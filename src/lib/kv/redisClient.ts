@@ -52,9 +52,13 @@ export const redis = {
         // Attempt to parse if it's JSON, otherwise return as string
         return JSON.parse(value) as T;
       } catch (e) {
-        // 记录解析错误但不抛出
-        console.warn(`Redis值解析JSON失败 (key=${key}):`, e);
-        return value as any as T; // Return as string if not JSON
+        // 如果解析失败，并且期望的是JSON，则记录警告。
+        // 如果不期望JSON，或者值本身就是有效字符串，则直接返回。
+        console.warn(
+          `Redis value for key=${key} is not valid JSON or parseJson was true but value is not JSON:`,
+          e
+        );
+        return value as any as T; // Return as string if not valid JSON and parseJson was true
       }
     } else {
       // 不解析，直接返回原始字符串
@@ -81,6 +85,62 @@ export const redis = {
     if (options?.xx) redisOptions.XX = options.xx;
 
     return client.set(key, stringValue, redisOptions);
+  },
+
+  async hget<T = any>(
+    key: string,
+    field: string,
+    parseJson: boolean = true
+  ): Promise<T | null> {
+    const client = await getConnectedClient();
+    const value = await client.hGet(key, field);
+    if (value === null || value === undefined) return null;
+
+    if (parseJson) {
+      try {
+        return JSON.parse(value) as T;
+      } catch (e) {
+        console.warn(
+          `Redis hash value for key=${key}, field=${field} is not valid JSON or parseJson was true but value is not JSON:`,
+          e
+        );
+        return value as any as T;
+      }
+    } else {
+      return value as any as T;
+    }
+  },
+
+  async hset(key: string, field: string, value: any): Promise<number> {
+    const client = await getConnectedClient();
+    const stringValue =
+      typeof value === "string" ? value : JSON.stringify(value);
+    return client.hSet(key, field, stringValue);
+  },
+
+  async hgetall<T = any>(
+    key: string,
+    parseJson: boolean = true
+  ): Promise<Record<string, T> | null> {
+    const client = await getConnectedClient();
+    const values = await client.hGetAll(key);
+
+    if (!values || Object.keys(values).length === 0) return null;
+
+    const result: Record<string, any> = {};
+    for (const [field, value] of Object.entries(values)) {
+      if (parseJson) {
+        try {
+          result[field] = JSON.parse(value) as T;
+        } catch (e) {
+          // If parsing fails, store the raw string value
+          result[field] = value;
+        }
+      } else {
+        result[field] = value;
+      }
+    }
+    return result as Record<string, T>;
   },
 
   async del(key: string): Promise<number> {

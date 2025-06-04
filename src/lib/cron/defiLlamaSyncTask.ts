@@ -3,17 +3,22 @@ import { DeFiLlamaSyncService } from "../../services/defiLlamaSync.service";
 import { prisma } from "../db/client";
 
 export function setupDefiLlamaSyncCronJobs() {
-  const syncService = new DeFiLlamaSyncService();
+  const defillamaSyncService = new DeFiLlamaSyncService();
 
   // 每天凌晨 1 点同步协议数据（完整同步，频率较低）
   new CronJob(
     "0 1 * * *",
     async () => {
-      console.log("执行 DeFi Llama 协议数据每日同步...");
+      console.log(
+        "DeFiLlamaSyncTask: Executing DeFiLlama protocol data daily sync..."
+      );
       try {
-        await syncService.syncProtocols();
+        await defillamaSyncService.syncProtocols();
       } catch (error) {
-        console.error("DeFi Llama 协议数据同步失败:", error);
+        console.error(
+          "DeFiLlamaSyncTask: DeFiLlama protocol data sync failed:",
+          error
+        );
       }
     },
     null,
@@ -24,11 +29,14 @@ export function setupDefiLlamaSyncCronJobs() {
   new CronJob(
     "0 */4 * * *",
     async () => {
-      console.log("执行 DeFi Llama 资金池数据同步...");
+      console.log("DeFiLlamaSyncTask: Executing DeFiLlama pool data sync...");
       try {
-        await syncService.syncPools();
+        await defillamaSyncService.syncPools();
       } catch (error) {
-        console.error("DeFi Llama 资金池数据同步失败:", error);
+        console.error(
+          "DeFiLlamaSyncTask: DeFi Llama pool data sync failed:",
+          error
+        );
       }
     },
     null,
@@ -39,7 +47,9 @@ export function setupDefiLlamaSyncCronJobs() {
   new CronJob(
     "0 * * * *",
     async () => {
-      console.log("执行 DeFi Llama 高收益资金池历史数据同步...");
+      console.log(
+        "DeFiLlamaSyncTask: Executing DeFi Llama high-yield pool historical data sync..."
+      );
       try {
         // 每小时只查询最新的高收益池子
         const topPools = await prisma.pool.findMany({
@@ -52,10 +62,13 @@ export function setupDefiLlamaSyncCronJobs() {
         });
 
         for (const pool of topPools) {
-          await syncService.syncPoolChart(pool.id);
+          await defillamaSyncService.syncPoolChart(pool.id);
         }
       } catch (error) {
-        console.error("DeFi Llama 资金池历史数据同步失败:", error);
+        console.error(
+          "DeFiLlamaSyncTask: DeFi Llama pool historical data sync failed:",
+          error
+        );
       }
     },
     null,
@@ -66,16 +79,23 @@ export function setupDefiLlamaSyncCronJobs() {
   new CronJob(
     "0 */6 * * *",
     async () => {
-      console.log("执行 DeFi Llama 稳定币数据同步...");
+      console.log(
+        "DeFiLlamaSyncTask: Executing DeFiLlama stablecoin data sync..."
+      );
       try {
-        await syncService.syncStablecoins();
+        await defillamaSyncService.syncStablecoins();
       } catch (error) {
-        console.error("DeFi Llama 稳定币数据同步失败:", error);
+        console.error(
+          "DeFiLlamaSyncTask: DeFiLlama stablecoin data sync failed:",
+          error
+        );
       }
     },
     null,
     true
   );
 
-  console.log("已设置 DeFi Llama 数据同步定时任务");
+  console.log(
+    "DeFiLlamaSyncTask: DeFiLlama data sync cron jobs set up successfully."
+  );
 }
