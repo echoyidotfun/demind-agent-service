@@ -1,6 +1,6 @@
 import { CronJob } from "cron";
 import { DeFiLlamaSyncService } from "../../services/defiLlamaSync.service";
-import { prisma } from "../db/client";
+import { prisma } from "../db/prismaClient";
 
 export function setupDefiLlamaSyncCronJobs() {
   const defillamaSyncService = new DeFiLlamaSyncService();

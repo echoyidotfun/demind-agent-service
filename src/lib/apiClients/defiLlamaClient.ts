@@ -13,7 +13,7 @@ export interface Protocol {
   symbol?: string;
   description?: string;
   chain?: string;
-  chains?: string[];
+  chains: string[];
   logo?: string;
   audits?: string;
   audit_note?: string;
@@ -27,6 +27,7 @@ export interface Protocol {
   mcap?: number;
   twitter?: string;
   url?: string;
+  listedAt?: number;
   deadFrom?: number; // Timestamp when the protocol ceased to be active
   audit_links?: string[]; // List of audit links
   github?: string[]; // List of GitHub repositories
@@ -47,6 +48,13 @@ export interface Pool {
   exposure?: string;
   poolMeta?: string;
   underlyingTokens?: string[];
+  apyPct1D?: number;
+  apyPct7D?: number;
+  apyPct30D?: number;
+  volumeUsd1d?: number;
+  volumeUsd7d?: number;
+  apyBase7d?: number;
+  apyMean30d?: number;
 }
 
 export interface PoolChartData {

@@ -1,4 +1,4 @@
-import { prisma } from "../lib/db/client";
+import { prisma } from "../lib/db/prismaClient";
 import { DeFiLlamaClient } from "../lib/apiClients/defiLlamaClient";
 import { redis } from "../lib/kv/redisClient";
 
@@ -6,11 +6,17 @@ export class DeFiLlamaSyncService {
   private defiLlamaClient: DeFiLlamaClient;
   private readonly BATCH_SIZE = 500; // Batch processing size
 
-  // Whitelist of EVM compatible chains (all lowercase)
-  private readonly EVM_CHAINS = new Set([
-    // Mainstream EVM compatible chains
+  // Whitelist of chains (all lowercase)
+  private readonly WHITELISTED_CHAINS = new Set([
+    // Mainstream chains
     "ethereum",
     "bsc",
+    "sui",
+    "aptos",
+    "solana",
+    "tron",
+    "near",
+    "cosmos",
     "polygon",
     "arbitrum",
     "optimism",
@@ -60,22 +66,25 @@ export class DeFiLlamaSyncService {
   }
 
   /**
-   * Checks if the protocol supports at least one EVM compatible chain.
+   * Checks if the protocol supports at least one whitelisted chain.
    */
-  private isEVMCompatible(protocol: any): boolean {
-    // If the chain field is an EVM compatible chain (case-insensitive)
-    if (protocol.chain && this.EVM_CHAINS.has(protocol.chain.toLowerCase())) {
+  private isWhiteListedProtocol(protocol: any): boolean {
+    // If the chain field is a whitelisted chain (case-insensitive)
+    if (
+      protocol.chain &&
+      this.WHITELISTED_CHAINS.has(protocol.chain.toLowerCase())
+    ) {
       return true;
     }
 
-    // If the chains array contains at least one EVM compatible chain
+    // If the chains array contains at least one whitelisted chain
     if (
       protocol.chains &&
       Array.isArray(protocol.chains) &&
       protocol.chains.length > 0
     ) {
       return protocol.chains.some((chain: string) =>
-        this.EVM_CHAINS.has(chain.toLowerCase())
+        this.WHITELISTED_CHAINS.has(chain.toLowerCase())
       );
     }
 
@@ -87,7 +96,7 @@ export class DeFiLlamaSyncService {
     let successCount = 0;
     let errorCount = 0;
     let skippedInactiveCount = 0;
-    let skippedNonEVMCount = 0;
+    let skippedUnwhitelistedCount = 0;
     let protocolsFromApi = 0;
     let updatedCount = 0;
     let newCount = 0;
@@ -115,16 +124,19 @@ export class DeFiLlamaSyncService {
       );
       skippedInactiveCount = protocols.length - activeProtocols.length;
 
-      // Further filter to keep only EVM compatible protocols
-      const evmProtocols = activeProtocols.filter((protocol) =>
-        this.isEVMCompatible(protocol)
+      // Further filter to keep only whitelisted protocols
+      const whitelistedProtocols = activeProtocols.filter((protocol) =>
+        this.isWhiteListedProtocol(protocol)
       );
       console.log(
-        `Further filtered to ${evmProtocols.length} EVM compatible protocols. ${
-          activeProtocols.length - evmProtocols.length
-        } non-EVM protocols will be skipped.`
+        `Further filtered to ${
+          whitelistedProtocols.length
+        } whitelisted protocols. ${
+          activeProtocols.length - whitelistedProtocols.length
+        } unwhitelisted protocols will be skipped.`
       );
-      skippedNonEVMCount = activeProtocols.length - evmProtocols.length;
+      skippedUnwhitelistedCount =
+        activeProtocols.length - whitelistedProtocols.length;
 
       // Get all existing protocol IDs to determine new vs. update
       const existingProtocolIds = new Set(
@@ -140,9 +152,12 @@ export class DeFiLlamaSyncService {
       );
 
       // Batch process protocol data
-      const protocolChunks = this.chunkArray(evmProtocols, this.BATCH_SIZE);
+      const protocolChunks = this.chunkArray(
+        whitelistedProtocols,
+        this.BATCH_SIZE
+      );
       console.log(
-        `Processing ${evmProtocols.length} EVM compatible protocols in ${protocolChunks.length} batches.`
+        `Processing ${whitelistedProtocols.length} whitelisted protocols in ${protocolChunks.length} batches.`
       );
 
       for (let i = 0; i < protocolChunks.length; i++) {
@@ -164,16 +179,13 @@ export class DeFiLlamaSyncService {
         // Process new protocols - insert all fields
         if (newProtocols.length > 0) {
           const createOperations = newProtocols.map((protocol) => {
-            // Process address field, extract actual address if in chain:address format
-            let processedAddress = protocol.address;
+            let processedAddress = protocol.address?.toLowerCase();
             if (protocol.address && protocol.address.includes(":")) {
               processedAddress = protocol.address.split(":")[1];
             }
 
             // Process chain field, convert to lowercase
-            const chainValue = protocol.chain
-              ? protocol.chain.toLowerCase()
-              : null;
+            const chainValue = protocol.chain?.toLowerCase();
 
             // Process chains array, convert to lowercase
             const chainsArray = protocol.chains
@@ -188,12 +200,12 @@ export class DeFiLlamaSyncService {
                 address: processedAddress,
                 symbol: protocol.symbol ?? null,
                 description: protocol.description ?? null,
-                chain: chainValue,
-                logo: protocol.logo ?? null,
+                chain: chainValue ?? "",
+                logo: protocol.logo ?? "",
                 audits: protocol.audits ?? null,
                 auditLinks: protocol.audit_links || [],
                 github: protocol.github ? protocol.github[0] : null,
-                category: protocol.category ?? null,
+                category: protocol.category ?? "",
                 chains: chainsArray,
                 tvl: protocol.tvl ?? null,
                 change1h: protocol.change_1h ?? null,
@@ -201,7 +213,10 @@ export class DeFiLlamaSyncService {
                 change7d: protocol.change_7d ?? null,
                 mcap: protocol.mcap ?? null,
                 twitter: protocol.twitter ?? null,
-                url: protocol.url ?? null,
+                url: protocol.url ?? "",
+                listedAt: protocol.listedAt
+                  ? new Date(protocol.listedAt * 1000)
+                  : null,
               },
             });
           });
@@ -226,12 +241,14 @@ export class DeFiLlamaSyncService {
             return prisma.protocol.update({
               where: { id: protocol.id },
               data: {
-                // Only update dynamic data fields
                 tvl: protocol.tvl ?? null,
                 change1h: protocol.change_1h ?? null,
                 change1d: protocol.change_1d ?? null,
                 change7d: protocol.change_7d ?? null,
                 mcap: protocol.mcap ?? null,
+                listedAt: protocol.listedAt
+                  ? new Date(protocol.listedAt * 1000)
+                  : null,
                 updatedAt: new Date(), // Update timestamp
               },
             });
@@ -254,17 +271,17 @@ export class DeFiLlamaSyncService {
 
       if (errorCount > 0) {
         console.warn(
-          `DeFi protocol data sync partially completed: ${successCount} succeeded (${newCount} new, ${updatedCount} updated), ${errorCount} failed, ${skippedInactiveCount} inactive protocols skipped, ${skippedNonEVMCount} non-EVM protocols skipped (total ${protocolsFromApi}).`
+          `DeFi protocol data sync partially completed: ${successCount} succeeded (${newCount} new, ${updatedCount} updated), ${errorCount} failed, ${skippedInactiveCount} inactive protocols skipped, ${skippedUnwhitelistedCount} unwhitelisted protocols skipped (total ${protocolsFromApi}).`
         );
         // If all failed, throw an exception
         if (successCount === 0) {
           throw new Error(
-            `All protocol data sync operations failed (${errorCount}/${evmProtocols.length})`
+            `All protocol data sync operations failed (${errorCount}/${whitelistedProtocols.length})`
           );
         }
       } else {
         console.log(
-          `DeFi protocol data sync completed: ${successCount} protocols processed successfully (${newCount} new, ${updatedCount} updated), ${skippedInactiveCount} inactive protocols skipped, ${skippedNonEVMCount} non-EVM protocols skipped.`
+          `DeFi protocol data sync completed: ${successCount} protocols processed successfully (${newCount} new, ${updatedCount} updated), ${skippedInactiveCount} inactive protocols skipped, ${skippedUnwhitelistedCount} unwhitelisted protocols skipped.`
         );
       }
     } catch (apiError) {
@@ -288,7 +305,7 @@ export class DeFiLlamaSyncService {
     let successCount = 0;
     let errorCount = 0;
     let skippedCount = 0;
-    let skippedNonEVMCount = 0;
+    let skippedUnwhitelistedCount = 0;
     let poolsFromApi = 0;
     let updatedCount = 0;
     let newCount = 0;
@@ -343,19 +360,19 @@ export class DeFiLlamaSyncService {
         `Filtered: ${validPools.length} valid pools, ${skippedCount} skipped due to non-existent protocol.`
       );
 
-      // Further filter to keep only EVM compatible pools (case-insensitive)
-      const evmPools = validPools.filter((pool) =>
-        this.EVM_CHAINS.has(pool.chain.toLowerCase())
+      // Further filter to keep only whitelisted pools (case-insensitive)
+      const whitelistedPools = validPools.filter((pool) =>
+        this.WHITELISTED_CHAINS.has(pool.chain.toLowerCase())
       );
-      skippedNonEVMCount = validPools.length - evmPools.length;
+      skippedUnwhitelistedCount = validPools.length - whitelistedPools.length;
       console.log(
-        `Further filtered: ${evmPools.length} EVM compatible pools, ${skippedNonEVMCount} non-EVM pools skipped.`
+        `Further filtered: ${whitelistedPools.length} whitelisted pools, ${skippedUnwhitelistedCount} unwhitelisted pools skipped.`
       );
 
       // Batch process valid pools
-      const poolChunks = this.chunkArray(evmPools, this.BATCH_SIZE);
+      const poolChunks = this.chunkArray(whitelistedPools, this.BATCH_SIZE);
       console.log(
-        `Processing ${evmPools.length} valid pools in ${poolChunks.length} batches.`
+        `Processing ${whitelistedPools.length} valid pools in ${poolChunks.length} batches.`
       );
 
       for (let i = 0; i < poolChunks.length; i++) {
@@ -382,14 +399,21 @@ export class DeFiLlamaSyncService {
               tvlUsd: pool.tvlUsd,
               apyBase: pool.apyBase,
               apyReward: pool.apyReward,
-              apy: pool.apy,
+              apy: pool.apy || 0,
               rewardTokens: pool.rewardTokens
                 ? JSON.stringify(pool.rewardTokens)
                 : null,
               stablecoin: pool.stablecoin || false,
-              ilRisk: pool.ilRisk,
-              exposure: pool.exposure,
+              ilRisk: pool.ilRisk || "no",
+              exposure: pool.exposure || "single",
               poolMeta: pool.poolMeta,
+              apyPct1D: pool.apyPct1D,
+              apyPct7D: pool.apyPct7D,
+              apyPct30D: pool.apyPct30D,
+              volumeUsd1d: pool.volumeUsd1d,
+              volumeUsd7d: pool.volumeUsd7d,
+              apyBase7d: pool.apyBase7d,
+              apyMean30d: pool.apyMean30d,
             }));
 
             // Batch create pools
@@ -421,7 +445,7 @@ export class DeFiLlamaSyncService {
                   ) {
                     allPoolTokensToCreate.push({
                       poolId: pool.pool,
-                      tokenAddress: tokenAddress.trim(), // Trim whitespace
+                      tokenAddress: tokenAddress.trim().toLowerCase(),
                       chain: pool.chain.toLowerCase(),
                     });
                   } else {
@@ -514,6 +538,13 @@ export class DeFiLlamaSyncService {
                   apyBase: pool.apyBase,
                   apyReward: pool.apyReward,
                   apy: pool.apy,
+                  apyPct1D: pool.apyPct1D,
+                  apyPct7D: pool.apyPct7D,
+                  apyPct30D: pool.apyPct30D,
+                  volumeUsd1d: pool.volumeUsd1d,
+                  volumeUsd7d: pool.volumeUsd7d,
+                  apyBase7d: pool.apyBase7d,
+                  apyMean30d: pool.apyMean30d,
                   updatedAt: new Date(),
                 },
               })
@@ -555,11 +586,11 @@ export class DeFiLlamaSyncService {
 
       if (errorCount > 0) {
         console.warn(
-          `Pool data sync partially completed: ${successCount} succeeded (${newCount} new, ${updatedCount} updated), ${errorCount} failed, ${skippedCount} skipped, ${skippedNonEVMCount} non-EVM chain skipped (total ${poolsFromApi}).`
+          `Pool data sync partially completed: ${successCount} succeeded (${newCount} new, ${updatedCount} updated), ${errorCount} failed, ${skippedCount} skipped, ${skippedUnwhitelistedCount} unwhitelisted chain skipped (total ${poolsFromApi}).`
         );
       } else {
         console.log(
-          `Pool data sync completed: ${successCount} pools processed successfully (${newCount} new, ${updatedCount} updated), ${skippedCount} skipped due to missing protocol, ${skippedNonEVMCount} skipped due to non-EVM chain.`
+          `Pool data sync completed: ${successCount} pools processed successfully (${newCount} new, ${updatedCount} updated), ${skippedCount} skipped due to missing protocol, ${skippedUnwhitelistedCount} skipped due to unwhitelisted chain.`
         );
       }
     } catch (apiError) {
@@ -600,12 +631,12 @@ export class DeFiLlamaSyncService {
 
     // If all operations failed and there were pools to process, throw an exception
     if (
-      errorCount === poolsFromApi - skippedCount - skippedNonEVMCount &&
-      poolsFromApi - skippedCount - skippedNonEVMCount > 0
+      errorCount === poolsFromApi - skippedCount - skippedUnwhitelistedCount &&
+      poolsFromApi - skippedCount - skippedUnwhitelistedCount > 0
     ) {
       throw new Error(
         `All pool data write operations failed (${errorCount}/${
-          poolsFromApi - skippedCount - skippedNonEVMCount
+          poolsFromApi - skippedCount - skippedUnwhitelistedCount
         })`
       );
     }

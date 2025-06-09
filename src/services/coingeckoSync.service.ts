@@ -13,6 +13,7 @@ import {
   TrendingCoinItem,
   CoinListItem,
 } from "../lib/apiClients/coingeckoClient";
+import { prisma as globalPrismaClient } from "../lib/db/prismaClient"; // Import the global prisma instance
 
 interface BasicCoinInfo {
   cgId: string;
@@ -29,7 +30,7 @@ export class CoinGeckoService {
     prismaClient?: PrismaClient,
     coingeckoClientInstance?: CoingeckoClient
   ) {
-    this.prisma = prismaClient || new PrismaClient();
+    this.prisma = prismaClient || globalPrismaClient; // Use globalPrismaClient as default
     this.coingeckoClient = coingeckoClientInstance || new CoingeckoClient();
   }
 
@@ -61,65 +62,94 @@ export class CoinGeckoService {
     let processedCount = 0;
     let platformEntriesCount = 0;
 
-    for (const batch of this.chunkArray(coinsList, this.BATCH_SIZE)) {
-      try {
-        await this.prisma.$transaction(async (tx) => {
-          for (const coin of batch) {
-            if (!coin.id || !coin.symbol || !coin.name) {
-              console.warn(
-                `CoinGeckoService: Skipping coin with missing id, symbol, or name: ${JSON.stringify(
-                  coin
-                )}`
-              );
-              continue;
-            }
+    const coinsListChunks = this.chunkArray(coinsList, this.BATCH_SIZE);
 
-            await tx.cgCoinsIndex.upsert({
-              where: { id: coin.id },
-              update: {
-                symbol: coin.symbol,
-                name: coin.name,
-                updatedAt: new Date(),
-              },
-              create: { id: coin.id, symbol: coin.symbol, name: coin.name },
-            });
+    for (let i = 0; i < coinsListChunks.length; i++) {
+      const batch = coinsListChunks[i];
 
-            const redisInfoKey = `cg:info:${coin.id}`;
-            await redis.set(
-              redisInfoKey,
-              JSON.stringify({ symbol: coin.symbol, name: coin.name }),
-              { ex: 60 * 60 * 24 * 7 }
-            );
+      const coinIndexUpsertPromises: Prisma.PrismaPromise<any>[] = [];
+      const platformUpsertPromises: Prisma.PrismaPromise<any>[] = [];
+      const redisPromises: Promise<any>[] = [];
 
-            if (coin.platforms) {
-              for (const [platformId, contractAddress] of Object.entries(
-                coin.platforms
-              )) {
-                if (platformId && contractAddress) {
-                  await tx.cgCoinPlatform.upsert({
-                    where: {
-                      cgId_platformId_contractAddress: {
-                        cgId: coin.id,
-                        platformId,
-                        contractAddress,
-                      },
+      for (const coin of batch) {
+        if (!coin.id || !coin.symbol || !coin.name) {
+          console.warn(
+            `CoinGeckoService: Skipping coin with missing id, symbol, or name: ${JSON.stringify(
+              coin
+            )}`
+          );
+          continue;
+        }
+
+        coinIndexUpsertPromises.push(
+          this.prisma.cgCoinsIndex.upsert({
+            where: { id: coin.id },
+            update: {
+              symbol: coin.symbol,
+              name: coin.name,
+              updatedAt: new Date(),
+            },
+            create: { id: coin.id, symbol: coin.symbol, name: coin.name },
+          })
+        );
+
+        redisPromises.push(
+          redis.set(
+            `cg:info:${coin.id}`,
+            JSON.stringify({ symbol: coin.symbol, name: coin.name }),
+            { ex: 60 * 60 * 24 * 7 }
+          )
+        );
+
+        if (coin.platforms) {
+          for (const [platformId, contractAddress] of Object.entries(
+            coin.platforms
+          )) {
+            if (platformId && contractAddress) {
+              const contractAddressLower = contractAddress.toLowerCase();
+              platformUpsertPromises.push(
+                this.prisma.cgCoinPlatform.upsert({
+                  where: {
+                    cgId_platformId_contractAddress: {
+                      cgId: coin.id,
+                      platformId,
+                      contractAddress: contractAddressLower,
                     },
-                    update: {},
-                    create: { cgId: coin.id, platformId, contractAddress },
-                  });
-                  const redisPlatformKey = `cg:${platformId}:${contractAddress.toLowerCase()}`;
-                  await redis.set(redisPlatformKey, coin.id, {
-                    ex: 60 * 60 * 24 * 7,
-                  });
-                  platformEntriesCount++;
-                }
-              }
+                  },
+                  update: {},
+                  create: {
+                    cgId: coin.id,
+                    platformId,
+                    contractAddress: contractAddressLower,
+                  },
+                })
+              );
+              redisPromises.push(
+                redis.set(`cg:${platformId}:${contractAddressLower}`, coin.id, {
+                  ex: 60 * 60 * 24 * 7,
+                })
+              );
+              platformEntriesCount++; // Count platforms prepared for this batch
             }
-            processedCount++;
           }
-        });
+        }
+        processedCount++; // Count coins prepared for this batch
+      }
+
+      try {
+        // Execute DB operations in a transaction
+        await this.prisma.$transaction([
+          ...coinIndexUpsertPromises,
+          ...platformUpsertPromises,
+        ]);
+
+        // Execute Redis operations after successful DB transaction
+        await Promise.all(redisPromises);
+
         console.log(
-          `CoinGeckoService: Processed batch. Total coins: ${processedCount}, Total platforms: ${platformEntriesCount}`
+          `CoinGeckoService: Processed batch ${i + 1}/${
+            coinsListChunks.length
+          } of coin list. Total coins: ${processedCount}, Total platforms: ${platformEntriesCount}`
         );
       } catch (error) {
         console.error(
@@ -144,6 +174,7 @@ export class CoinGeckoService {
       );
       return null;
     }
+
     const contractAddressLower = contractAddress.toLowerCase();
     const redisPlatformKey = `cg:${platformId}:${contractAddressLower}`;
     let cgId: string | null = null;
@@ -163,6 +194,7 @@ export class CoinGeckoService {
           where: { platformId, contractAddress: contractAddressLower },
           select: { cgId: true },
         });
+
         if (platformRecord?.cgId) {
           cgId = platformRecord.cgId;
           try {
@@ -187,11 +219,13 @@ export class CoinGeckoService {
     }
 
     const redisInfoKey = `cg:info:${cgId}`;
+
     try {
       const basicInfo = await redis.get<{ symbol: string; name: string }>(
         redisInfoKey,
         true
       );
+
       if (basicInfo && basicInfo.name && basicInfo.symbol) {
         return { cgId, name: basicInfo.name, symbol: basicInfo.symbol };
       }
@@ -207,6 +241,7 @@ export class CoinGeckoService {
         where: { id: cgId },
         select: { name: true, symbol: true },
       });
+
       if (coinIndexRecord) {
         const { name, symbol } = coinIndexRecord;
         try {
@@ -231,30 +266,18 @@ export class CoinGeckoService {
     return { cgId, name: "Unknown", symbol: "Unknown" };
   }
 
-  // 获取代币详细信息 (懒加载)
-  async getCoinDetailsAndStore(
-    cgId: string,
-    maxStalenessHours: number = 2
+  /**
+   * 从缓存中获取代币详情
+   */
+  private async getCoinDetailsFromCache(
+    cgId: string
   ): Promise<CgCoinDetails | null> {
-    if (!cgId) {
-      console.warn(
-        "CoinGeckoService: getCoinDetailsAndStore called with invalid cgId."
-      );
-      return null;
-    }
-
     const redisKey = `cg:details:${cgId}`;
-    const cacheDurationSeconds = maxStalenessHours * 60 * 60;
-    const now = new Date();
-
-    // 1. Try fetching from Redis first
     try {
-      const cachedDetailsString = await redis.get<string>(redisKey, false); // Get as raw string
+      const cachedDetailsString = await redis.get<string>(redisKey, false);
       if (cachedDetailsString) {
         const cachedDetails = JSON.parse(cachedDetailsString) as CgCoinDetails;
-        // Optional: Add a timestamp within the cached object to double-check staleness if needed,
-        // but TTL is generally sufficient for this layer.
-        // Ensure all date fields are proper Date objects after parsing
+        // 确保日期字段正确解析
         if (cachedDetails.dataFetchedAt)
           cachedDetails.dataFetchedAt = new Date(cachedDetails.dataFetchedAt);
         if (cachedDetails.athDateUsd)
@@ -264,84 +287,163 @@ export class CoinGeckoService {
         if (cachedDetails.cgLastUpdated)
           cachedDetails.cgLastUpdated = new Date(cachedDetails.cgLastUpdated);
 
-        console.log(
-          `CoinGeckoService: Returning details for ${cgId} from Redis cache.`
-        );
         return cachedDetails;
       }
     } catch (error) {
-      console.error(
-        `CoinGeckoService: Redis error fetching details for ${cgId} from key ${redisKey}:`,
-        error
-      );
+      console.error(`Redis error fetching details for ${cgId}:`, error);
+    }
+    return null;
+  }
+
+  /**
+   * 设置代币详情缓存
+   */
+  private async setCoinDetailsCache(
+    cgId: string,
+    details: CgCoinDetails
+  ): Promise<void> {
+    const redisKey = `cg:details:${cgId}`;
+    const cacheDurationSeconds = 12 * 60 * 60; // 12小时缓存
+    try {
+      await redis.set(redisKey, JSON.stringify(details), {
+        ex: cacheDurationSeconds,
+      });
+    } catch (error) {
+      console.error(`Failed to cache details to Redis for ${cgId}:`, error);
+    }
+  }
+
+  /**
+   * 获取币种详情并存储到数据库
+   */
+  async getCoinDetailsAndStore(cgId: string): Promise<CgCoinDetails | null> {
+    console.log(`Getting coin details for: ${cgId}`);
+
+    // 1. 先检查数据库中是否已存在该币种基本信息
+    const existingCoin = await this.prisma.cgCoinsIndex.findUnique({
+      where: { id: cgId },
+    });
+
+    // 如果币种基本信息不存在，需要先创建基本记录
+    if (!existingCoin) {
+      try {
+        // 尝试通过API获取币种基本信息
+        const coinsList = await this.coingeckoClient.getCoinsList(true);
+        const coinInfo = coinsList?.find((coin) => coin.id === cgId);
+
+        if (coinInfo) {
+          // 如果API中找到了该币种，先创建基本信息记录
+          await this.prisma.cgCoinsIndex.create({
+            data: {
+              id: cgId,
+              name: coinInfo.name,
+              symbol: coinInfo.symbol,
+            },
+          });
+          console.log(`Created basic coin record for: ${cgId}`);
+        } else {
+          console.error(`Cannot find basic information for coin: ${cgId}`);
+          return null;
+        }
+      } catch (error) {
+        console.error(`Error creating basic record for coin: ${cgId}`, error);
+        return null;
+      }
     }
 
-    // 2. Try fetching from Database and check staleness
     try {
+      // 2. 检查缓存
+      const cachedDetails = await this.getCoinDetailsFromCache(cgId);
+      if (cachedDetails) {
+        console.log(`Cache hit for coin details: ${cgId}`);
+        return cachedDetails;
+      }
+
+      // 3. 查询数据库
       const dbDetails = await this.prisma.cgCoinDetails.findUnique({
         where: { cgId },
       });
 
-      if (dbDetails?.dataFetchedAt) {
-        const stalenessDb =
-          (now.getTime() - new Date(dbDetails.dataFetchedAt).getTime()) /
-          (1000 * 60 * 60);
+      // 检查是否需要更新（超过12小时）
+      const now = new Date();
+      const updateThreshold = new Date(now.getTime() - 12 * 60 * 60 * 1000); // 12小时
 
-        if (stalenessDb < maxStalenessHours) {
-          try {
-            await redis.set(redisKey, JSON.stringify(dbDetails), {
-              ex: cacheDurationSeconds,
-            });
-          } catch (redisSetError) {
-            console.error(
-              `CoinGeckoService: Failed to cache DB details to Redis for ${cgId}:`,
-              redisSetError
-            );
-          }
+      if (dbDetails && dbDetails.dataFetchedAt > updateThreshold) {
+        console.log(`Recent DB record found for ${cgId}, using it`);
+        await this.setCoinDetailsCache(cgId, dbDetails);
+        return dbDetails;
+      }
+
+      // 4. 从API获取新数据
+      console.log(`Fetching new data from API for ${cgId}`);
+      const apiDetails = await this.coingeckoClient.getCoinDetailsFromApi(cgId);
+      if (!apiDetails) {
+        console.log(
+          `No API details available for ${cgId}, using DB record if available`
+        );
+        if (dbDetails) {
+          await this.setCoinDetailsCache(cgId, dbDetails);
+        }
+        return dbDetails;
+      }
+
+      // 4. Store new data in DB and cache in Redis
+      try {
+        const processedData = this.mapApiDetailToDbSchema(apiDetails);
+        const newDbDetails = await this.prisma.cgCoinDetails.upsert({
+          where: { cgId },
+          create: {
+            ...processedData,
+            dataFetchedAt: now,
+            coin: {
+              connect: { id: cgId },
+            },
+          },
+          update: {
+            ...processedData,
+            dataFetchedAt: now,
+          },
+        });
+
+        console.log(`Updated DB and cache for coin ${cgId}`);
+        await this.setCoinDetailsCache(cgId, newDbDetails);
+        return newDbDetails;
+      } catch (error: any) {
+        console.error(
+          `CoinGeckoService: Error upserting API details for coin ${cgId}:`,
+          error
+        );
+
+        // 如果是外键约束错误，并且我们有API数据，尝试返回处理后的数据而不是null
+        if (error.code === "P2003" && apiDetails) {
+          console.log(
+            `Returning processed API data for ${cgId} without DB storage due to foreign key error`
+          );
+          const processedData = this.mapApiDetailToDbSchema(apiDetails);
+          // 添加必要字段以匹配CgCoinDetails类型
+          const fakeDbDetails = {
+            ...processedData,
+            cgId,
+            dataFetchedAt: now,
+          } as CgCoinDetails;
+
+          await this.setCoinDetailsCache(cgId, fakeDbDetails);
+          return fakeDbDetails;
+        }
+
+        // 如果数据库中有记录，返回数据库记录
+        if (dbDetails) {
+          console.log(
+            `Returning existing DB record for ${cgId} after upsert error`
+          );
+          await this.setCoinDetailsCache(cgId, dbDetails);
           return dbDetails;
         }
+
+        return null;
       }
-    } catch (dbError) {
-      console.error(
-        `CoinGeckoService: DB error fetching existing details for ${cgId}:`,
-        dbError
-      );
-    }
-
-    // 3. Fetch from API if not in Redis or DB is stale/missing
-    console.log(`CoinGeckoService: Fetching new details from API for ${cgId}`);
-    const apiDetails = await this.coingeckoClient.getCoinDetailsFromApi(cgId);
-
-    if (!apiDetails || !apiDetails.id) {
-      console.log(`CoinGeckoService: No details found from API for ${cgId}.`);
-      return null;
-    }
-
-    // 4. Store new data in DB and cache in Redis
-    try {
-      const processedData = this.mapApiDetailToDbSchema(apiDetails);
-      const newDbDetails = await this.prisma.cgCoinDetails.upsert({
-        where: { cgId },
-        update: { ...processedData, dataFetchedAt: now },
-        create: { cgId, ...processedData, dataFetchedAt: now },
-      });
-
-      try {
-        await redis.set(redisKey, JSON.stringify(newDbDetails), {
-          ex: cacheDurationSeconds,
-        });
-      } catch (redisSetError) {
-        console.error(
-          `CoinGeckoService: Failed to cache new API details to Redis for ${cgId}:`,
-          redisSetError
-        );
-      }
-      return newDbDetails;
     } catch (error) {
-      console.error(
-        `CoinGeckoService: Error upserting API details for coin ${cgId}:`,
-        error
-      );
+      console.error(`Error in getCoinDetailsAndStore for ${cgId}:`, error);
       return null;
     }
   }
@@ -451,7 +553,7 @@ export class CoinGeckoService {
     }
 
     const redisKey = "cg:trending:coins";
-    const cacheDurationSeconds = 60 * 60; // 1 hour
+    const cacheDurationSeconds = 2 * 60 * 60; // 2 hours
 
     try {
       await redis.set(redisKey, JSON.stringify(trendingCoins), {
@@ -476,7 +578,7 @@ export class CoinGeckoService {
     for (const trendItem of trendingCoins) {
       if (trendItem && trendItem.id) {
         try {
-          const details = await this.getCoinDetailsAndStore(trendItem.id, 1);
+          const details = await this.getCoinDetailsAndStore(trendItem.id);
           if (details) {
             detailsSyncedCount++;
           }
@@ -510,6 +612,44 @@ export class CoinGeckoService {
     } catch (error) {
       console.error(
         "CoinGeckoService: Error fetching trending coins from Redis cache:",
+        error
+      );
+      return null;
+    }
+  }
+
+  /**
+   * 获取指定CoinGecko ID的代币在各区块链上的合约地址
+   * @param cgId - CoinGecko代币ID
+   * @returns 返回包含区块链ID和合约地址（小写）的对象数组，如果未找到则返回null
+   */
+  async getCoinPlatformsByCgId(
+    cgId: string
+  ): Promise<{ blockchainId: string; contractAddress: string }[] | null> {
+    if (!cgId) {
+      console.warn(
+        "CoinGeckoService: getCoinPlatformsByCgId called with empty cgId."
+      );
+      return null;
+    }
+    try {
+      const platforms = await this.prisma.cgCoinPlatform.findMany({
+        where: { cgId },
+        select: { platformId: true, contractAddress: true },
+      });
+
+      if (!platforms || platforms.length === 0) {
+        return null;
+      }
+
+      // 转换platformId为blockchainId，并确保contractAddress为小写
+      return platforms.map((platform) => ({
+        blockchainId: platform.platformId,
+        contractAddress: platform.contractAddress.toLowerCase(),
+      }));
+    } catch (error) {
+      console.error(
+        `CoinGeckoService: Error fetching platforms for cgId ${cgId}:`,
         error
       );
       return null;
