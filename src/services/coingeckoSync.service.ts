@@ -494,6 +494,10 @@ export class CoinGeckoService {
       linksTelegramChannelId:
         apiDetail.links?.telegram_channel_identifier || null,
       linksGithubRepos: apiDetail.links?.repos_url?.github?.[0] || null,
+      linksSubredditUrl: apiDetail.links?.subreddit_url || null,
+      sentimentVotesUpPercentage:
+        apiDetail.sentiment_votes_up_percentage || 0.0,
+      watchlistPortfolioUsers: apiDetail.watchlist_portfolio_users || 0,
       marketCapRank: apiDetail.market_cap_rank || null,
       currentPriceUsd: handleDecimalInput(
         apiDetail.market_data?.current_price?.usd
@@ -553,7 +557,7 @@ export class CoinGeckoService {
     }
 
     const redisKey = "cg:trending:coins";
-    const cacheDurationSeconds = 2 * 60 * 60; // 2 hours
+    const cacheDurationSeconds = 12 * 60 * 60; // 12 hours
 
     try {
       await redis.set(redisKey, JSON.stringify(trendingCoins), {

@@ -9,27 +9,28 @@ datasource db {
 }
 
 model Protocol {
-  id          String   @id
+  id          String    @id
   name        String
-  slug        String   @unique
+  slug        String    @unique
   address     String?
   symbol      String?
   description String?
-  chain       String?
-  logo        String?
+  chain       String
+  logo        String
   audits      String?
-  category    String?
+  category    String
   chains      String[]
   tvl         Float?
-  change1h    Float?   @map("change_1h")
-  change1d    Float?   @map("change_1d")
-  change7d    Float?   @map("change_7d")
+  change1h    Float?    @map("change_1h")
+  change1d    Float?    @map("change_1d")
+  change7d    Float?    @map("change_7d")
   mcap        Float?
   twitter     String?
-  url         String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @default(now()) @updatedAt
-  auditLinks  String[] @map("audit_links")
+  url         String
+  listedAt    DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @default(now()) @updatedAt
+  auditLinks  String[]  @map("audit_links")
   github      String?
   pools       Pool[]
 
@@ -45,12 +46,19 @@ model Pool {
   tvlUsd       Float
   apyBase      Float?
   apyReward    Float?
-  apy          Float?
+  apy          Float
   rewardTokens String?
-  stablecoin   Boolean?
-  ilRisk       String?
-  exposure     String?
+  stablecoin   Boolean
+  ilRisk       String
+  exposure     String
   poolMeta     String?
+  apyPct1D     Float?
+  apyPct7D     Float?
+  apyPct30D    Float?
+  volumeUsd1d  Float?
+  volumeUsd7d  Float?
+  apyBase7d    Float?
+  apyMean30d   Float?
   createdAt    DateTime    @default(now())
   updatedAt    DateTime    @updatedAt
   protocol     Protocol    @relation(fields: [project], references: [slug])
@@ -146,6 +154,9 @@ model CgCoinDetails {
   linksTwitterScreenName       String?   @map("links_twitter_screen_name")
   linksTelegramChannelId       String?   @map("links_telegram_channel_identifier")
   linksGithubRepos             String?   @map("links_github_repos")
+  linksSubredditUrl            String?   @map("links_subreddit_url")
+  sentimentVotesUpPercentage   Float?    @map("sentiment_votes_up_percentage")
+  watchlistPortfolioUsers      Int?      @map("watchlist_portfolio_users")
   marketCapRank                Int?      @map("market_cap_rank")
   currentPriceUsd              Decimal?  @map("current_price_usd")
   marketCapUsd                 Decimal?  @map("market_cap_usd")

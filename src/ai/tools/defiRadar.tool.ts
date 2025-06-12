@@ -60,6 +60,9 @@ interface OutputSchemaToken {
   twitter: string | null;
   telegram: string | null;
   github: string | null;
+  subreddit: string | null;
+  sentimentVotesUpPercentage: number;
+  watchlistPortfolioUsers: number;
   marketCapRank: number | null;
   currentPrice: Decimal | null;
   marketCap: Decimal | null;
@@ -140,8 +143,8 @@ const protocolSchema = z.object({
   twitter: z.string().nullable().describe("Protocol Twitter handle"),
   github: z.string().nullable().describe("Protocol GitHub URL"),
   tvl: z.number().nullable().describe("Total Value Locked across all pools"),
-  listAt: z
-    .date()
+  listedAt: z
+    .string()
     .nullable()
     .describe("Date when the protocol was listed on DeFiLlama"),
 });
@@ -158,6 +161,15 @@ const tokenSchema = z.object({
   twitter: z.string().nullable().describe("Token Twitter handle"),
   telegram: z.string().nullable().describe("Token Telegram channel"),
   github: z.string().nullable().describe("Token GitHub repositories"),
+  subreddit: z.string().nullable().describe("Token subreddit URL"),
+  sentimentVotesUpPercentage: z
+    .number()
+    .nullable()
+    .describe("Sentiment votes up percentage"),
+  watchlistPortfolioUsers: z
+    .number()
+    .nullable()
+    .describe("Watchlist portfolio users"),
   marketCapRank: z.number().nullable().describe("Market cap rank"),
   currentPrice: z.any().nullable().describe("Current price in USD"),
   marketCap: z.any().nullable().describe("Market capitalization in USD"),
@@ -192,22 +204,7 @@ const trendingSchema = z.object({
     .describe("IDs of pools related to this trending token"),
 });
 
-const defiInvestmentOutputSchema = z.object({
-  pools: z
-    .array(poolSchema)
-    .describe("List of DeFi pools matching the criteria"),
-  protocols: z
-    .record(z.string(), protocolSchema)
-    .describe("Protocol data keyed by protocol ID"),
-  tokens: z
-    .record(z.string(), tokenSchema)
-    .describe("Token data keyed by CoinGecko ID"),
-  error: z.string().optional().describe("Error message if any"),
-  details: z.string().optional().describe("Additional error details"),
-  message: z.string().optional().describe("Informational message"),
-});
-
-const trendingTokenPoolsOutputSchema = z.object({
+export const defiRadarToolOutputSchema = z.object({
   trending: z
     .array(trendingSchema)
     .optional()
@@ -221,9 +218,9 @@ const trendingTokenPoolsOutputSchema = z.object({
   tokens: z
     .record(z.string(), tokenSchema)
     .describe("Token data keyed by CoinGecko ID"),
-  error: z.string().optional().describe("Error message if any"),
-  details: z.string().optional().describe("Additional error details"),
-  message: z.string().optional().describe("Informational message"),
+  error: z.string().nullable().describe("Error message if any"),
+  details: z.string().nullable().describe("Additional error details"),
+  message: z.string().nullable().describe("Informational message"),
 });
 
 // 辅助函数 - 构建池子查询条件
@@ -406,6 +403,9 @@ async function collectTokenInfo(
             twitter: details.linksTwitterScreenName,
             telegram: details.linksTelegramChannelId,
             github: details.linksGithubRepos,
+            subreddit: details.linksSubredditUrl,
+            sentimentVotesUpPercentage: details.sentimentVotesUpPercentage || 0,
+            watchlistPortfolioUsers: details.watchlistPortfolioUsers || 0,
             marketCapRank: details.marketCapRank,
             currentPrice: safeValue(details.currentPriceUsd),
             marketCap: safeValue(details.marketCapUsd),
@@ -567,7 +567,7 @@ export const findDefiInvestmentOpportunitiesTool = createTool({
       .default(10)
       .describe("Number of results to return, defaults to 10, maximum 50"),
   }),
-  outputSchema: defiInvestmentOutputSchema,
+  outputSchema: defiRadarToolOutputSchema,
   execute: async ({ context }) => {
     const {
       chain,
@@ -772,7 +772,7 @@ export const findTrendingTokenPoolsTool = createTool({
         "Number of pools to return per trending token, defaults to 5, maximum 10"
       ),
   }),
-  outputSchema: trendingTokenPoolsOutputSchema,
+  outputSchema: defiRadarToolOutputSchema,
   execute: async ({ context }) => {
     const { minTvlUsd = 10000, minApy = 5, limit = 5 } = context;
     const maxLimit = Math.min(limit, 10);
@@ -893,6 +893,7 @@ export const findTrendingTokenPoolsTool = createTool({
               chain: contract.chain,
               tokenAddress: contract.address,
             },
+            take: 2,
             include: {
               pool: {
                 include: {
@@ -1105,6 +1106,11 @@ export const findTrendingTokenPoolsTool = createTool({
             relatedPoolIds,
           };
         });
+
+        // 8. 添加过滤逻辑，移除没有相关池子的trending token
+        result.trending = result.trending.filter(
+          (token) => token.relatedPoolsCount && token.relatedPoolsCount > 0
+        );
 
         console.log(
           `[Find Trending Token Pools] Final result contains ${

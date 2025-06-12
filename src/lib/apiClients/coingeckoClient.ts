@@ -35,9 +35,12 @@ const ApiCoinDetailSchema = z.object({
       repos_url: z
         .object({ github: z.array(z.string()).optional() })
         .optional(),
+      subreddit_url: z.string().nullable().optional(),
     })
     .optional(),
   market_cap_rank: z.number().nullable().optional(),
+  sentiment_votes_up_percentage: z.number().nullable().optional(),
+  watchlist_portfolio_users: z.number().nullable().optional(),
   market_data: z
     .object({
       current_price: z
