@@ -4,15 +4,17 @@ import { cors } from "hono/cors";
 import { Mastra } from "@mastra/core";
 import { streamSSE } from "hono/streaming";
 import {
-  // DefiRadarAgent,
   intentAgent,
   reportGeneralAgent,
   reportTrendingAgent,
 } from "./ai/agents/defiRadar.agent";
 import { defiRadarWorkflow } from "./ai/workflows/defiRadar.workflow";
 import { setupDefiLlamaSyncCronJobs } from "./lib/cron/defiLlamaSyncTask";
+import { setupCoinGeckoSyncCronJobs } from "./lib/cron/coingeckoSyncTask";
 import { DeFiLlamaSyncService } from "./services/defiLlamaSync.service";
 import { CoinGeckoService } from "./services/coingeckoSync.service";
+import { checkPrismaConnection } from "./lib/db/prismaClient";
+import { checkRedisConnection } from "./lib/kv/redisClient";
 
 const defiLlamaSyncService = new DeFiLlamaSyncService();
 const coinGeckoService = new CoinGeckoService();
@@ -33,16 +35,17 @@ const mastra = new Mastra({
 // 创建 Hono 应用
 const app = new Hono();
 
+const productionOrigins = ["https://demind.fun"];
+const developmentOrigins = ["http://localhost:5500", "http://localhost:5501"];
+
 // 启用 CORS
 app.use(
   "/*",
   cors({
-    origin: [
-      "http://localhost:3000",
-      "http://localhost:5500",
-      "http://127.0.0.1:5500",
-      "https://your-frontend-domain.com",
-    ],
+    origin:
+      process.env.NODE_ENV === "production"
+        ? productionOrigins
+        : developmentOrigins,
     allowHeaders: ["Content-Type", "Authorization", "Cache-Control"],
     allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     exposeHeaders: ["Content-Type", "Content-Length"],
@@ -60,68 +63,138 @@ app.get("/", (c) =>
   })
 );
 
-app.get("/health", (c) => c.json({ status: "ok" }));
+// 健康检查端点
+app.get("/health", async (c) => {
+  const status = {
+    service: "DeMind Agent API",
+    status: "running",
+    version: "1.0.0",
+    db: "unknown",
+    redis: "unknown",
+    timestamp: new Date().toISOString(),
+    environment: process.env.NODE_ENV || "development",
+  };
+
+  // 检查数据库连接
+  try {
+    const isConnected = await checkPrismaConnection();
+    status.db = isConnected ? "connected" : "disconnected";
+    if (!isConnected) {
+      status.status = "degraded";
+    }
+  } catch (error) {
+    console.error("数据库健康检查失败:", error);
+    status.db = "disconnected";
+    status.status = "degraded";
+  }
+
+  // 检查Redis连接
+  try {
+    const isConnected = await checkRedisConnection();
+    if (isConnected) {
+      status.redis = "connected";
+    } else {
+      status.redis = "disconnected";
+      status.status = "degraded";
+    }
+  } catch (error) {
+    console.error("Redis健康检查失败:", error);
+    status.redis = "disconnected";
+    status.status = "degraded";
+  }
+
+  // 设置适当的HTTP状态码
+  if (status.status === "degraded") {
+    return c.json(status, 503); // Service Unavailable
+  }
+  return c.json(status);
+});
+
+// 详细健康检查端点，用于运维监控
+app.get("/health/detailed", async (c) => {
+  const detailedStatus = {
+    service: "DeMind Agent API",
+    status: "running",
+    version: "1.0.0",
+    timestamp: new Date().toISOString(),
+    environment: process.env.NODE_ENV || "development",
+    components: {
+      database: {
+        status: "unknown",
+        details: {},
+      },
+      redis: {
+        status: "unknown",
+        details: {},
+      },
+      services: {
+        defiLlama: "unknown",
+        coinGecko: "unknown",
+      },
+    },
+    uptime: process.uptime(),
+    memory: process.memoryUsage(),
+  };
+
+  // 检查数据库
+  try {
+    const start = Date.now();
+    const isConnected = await checkPrismaConnection();
+    const latency = Date.now() - start;
+
+    detailedStatus.components.database = {
+      status: isConnected ? "healthy" : "unhealthy",
+      details: {
+        connected: isConnected,
+        latency: `${latency}ms`,
+      },
+    };
+  } catch (error) {
+    detailedStatus.components.database = {
+      status: "unhealthy",
+      details: {
+        error: error instanceof Error ? error.message : String(error),
+        connected: false,
+      },
+    };
+  }
+
+  // 检查Redis
+  try {
+    const start = Date.now();
+    const isConnected = await checkRedisConnection();
+    const latency = Date.now() - start;
+
+    detailedStatus.components.redis = {
+      status: isConnected ? "healthy" : "unhealthy",
+      details: {
+        connected: isConnected,
+        latency: `${latency}ms`,
+      },
+    };
+  } catch (error) {
+    detailedStatus.components.redis = {
+      status: "unhealthy",
+      details: {
+        error: error instanceof Error ? error.message : String(error),
+        connected: false,
+      },
+    };
+  }
+
+  // 根据组件状态设置整体状态
+  if (
+    detailedStatus.components.database.status === "unhealthy" ||
+    detailedStatus.components.redis.status === "unhealthy"
+  ) {
+    detailedStatus.status = "degraded";
+    return c.json(detailedStatus, 503); // Service Unavailable
+  }
+
+  return c.json(detailedStatus);
+});
 
 const api = new Hono().basePath("/api/v1");
-
-// api.post("/debug/defiRadar", async (c) => {
-//   try {
-//     const { query, maxSteps = 10 } = await c.req.json();
-
-//     if (!query) {
-//       return c.json({ error: "Query is required" }, 400);
-//     }
-
-//     console.log(`[DEBUG] DefiRadar Agent processing query: "${query}"`);
-
-//     // 创建一个更详细的响应，包含工具调用信息
-//     const steps: any[] = [];
-//     const response = await DefiRadarAgent.generate(
-//       [{ role: "user", content: query }],
-//       {
-//         maxSteps,
-//         onStepFinish: ({ text, toolCalls, toolResults }) => {
-//           // 记录每个步骤的信息
-//           const stepInfo = {
-//             text:
-//               text?.substring(0, 200) +
-//               (text && text.length > 200 ? "..." : ""),
-//             toolCalls:
-//               toolCalls?.map((call) => ({
-//                 type: call.type,
-//                 tool: call.type === "tool-call" ? call.toolName : "none",
-//                 args: call.type === "tool-call" ? call.args : {},
-//               })) || [],
-//             hasResults: !!toolResults?.length,
-//           };
-
-//           steps.push(stepInfo);
-//           console.log(
-//             `[DEBUG] Step ${steps.length} completed:`,
-//             JSON.stringify(stepInfo, null, 2)
-//           );
-//         },
-//       }
-//     );
-
-//     return c.json({
-//       reply: response.text,
-//       steps,
-//       totalSteps: steps.length,
-//       success: true,
-//     });
-//   } catch (error: any) {
-//     console.error("[DEBUG] DefiRadar Agent error:", error);
-//     return c.json(
-//       {
-//         success: false,
-//         message: "DefiRadar Agent debug failed",
-//         error: error.message || String(error),
-//       },
-//       500
-//     );
-//   }
-// });
 
 // Add debug interface for defiRadarWorkflow
 // api.post("/debug/defiRadarWorkflow", async (c) => {
@@ -296,13 +369,15 @@ api.get("/stream/defiRadarWorkflow", async (c) => {
                 case "prepare-intent-input":
                   eventData.detail = { message: "Recognizing user intent..." };
                   break;
-                case "tool-selector":
+                case "tool-call":
                   eventData.detail = {
-                    message: "Selecting appropriate DeFi data tool...",
+                    message: "Fetching DeFi data...",
                   };
                   break;
-                case "process-tool-output":
-                  eventData.detail = { message: "Processing tool output..." };
+                case "agent-generate-report":
+                  eventData.detail = {
+                    message: "Mind analyzing...",
+                  };
                   break;
                 case "wrap-analysis-report":
                   eventData.detail = {
@@ -325,18 +400,18 @@ api.get("/stream/defiRadarWorkflow", async (c) => {
                 case "tool-selector":
                   eventData.detail = {
                     dataFetching: true,
-                    message: "Fetching DeFi data...",
+                    message: "Fetching finished",
                   };
                   break;
-                case "process-tool-output":
+                case "agent-generate-report":
                   eventData.detail = {
                     analysisStarted: true,
-                    message: "Analyzing DeFi investment opportunities...",
+                    message: "Mind is talking...",
                   };
                   break;
                 case "wrap-analysis-report":
                   eventData.detail = {
-                    message: "Analysis report successfully compiled",
+                    message: "Analysis report checked",
                   };
                   break;
                 case "final-data-formatter":
@@ -353,12 +428,7 @@ api.get("/stream/defiRadarWorkflow", async (c) => {
               ) {
                 try {
                   // 只选择安全的元数据字段
-                  if (currentStep.id === "intent-recognition") {
-                    eventData.data = {
-                      tool: currentStep.output.tool,
-                      hasParams: !!currentStep.output.params,
-                    };
-                  } else if (currentStep.id === "tool-selector") {
+                  if (currentStep.id === "tool-call") {
                     eventData.data = {
                       selectedTool: currentStep.output.selectedTool,
                       poolsCount:
@@ -410,7 +480,7 @@ api.get("/stream/defiRadarWorkflow", async (c) => {
         const timeoutPromise = new Promise<void>((_, reject) => {
           setTimeout(() => {
             reject(new Error("Operation timeout"));
-          }, 120000); // 2分钟超时
+          }, 180000); // 3分钟超时
         });
 
         try {
@@ -517,59 +587,338 @@ api.get("/stream/defiRadarWorkflow", async (c) => {
   );
 });
 
-// // 获取代币详情API接口
-// api.get("/coin/details", async (c) => {
-//   const cgId = c.req.query("cgId") as string;
-//   const details = await coinGeckoService.getCoinDetailsAndStore(cgId);
-//   return c.json(details);
-// });
+// 添加API密钥验证中间件
+const verifyCronApiKey = async (c: any, next: any) => {
+  // 检查请求头中的API密钥
+  const apiKey = c.req.header("X-CRON-API-KEY");
 
-// 将 API 路由挂载到主应用
+  // 验证API密钥是否有效
+  if (!apiKey || apiKey !== process.env.X_CRON_API_KEY) {
+    return c.json(
+      {
+        success: false,
+        message: "未授权访问",
+        timestamp: new Date().toISOString(),
+      },
+      401
+    );
+  }
+
+  // 密钥验证通过，继续处理请求
+  return await next();
+};
+
+// 为高频率独立同步任务的API端点添加验证中间件
+api.use("/cron/defillama-pools", verifyCronApiKey);
+api.use("/cron/coingecko-trending", verifyCronApiKey);
+
+// 为其他独立同步任务的API端点添加验证中间件（虽然已合并，但保留接口）
+api.use("/cron/defillama-protocols", verifyCronApiKey);
+api.use("/cron/defillama-stablecoins", verifyCronApiKey);
+api.use("/cron/coingecko-coins", verifyCronApiKey);
+
+// 合并的API端点（由Vercel Cron触发）不需要验证，因为它们受Vercel自身保护
+
+// Vercel Cron 定时触发的合并任务端点
+api.get("/cron/defillama-all", async (c) => {
+  try {
+    console.log("启动DeFiLlama全部数据异步同步");
+
+    // 立即开始后台异步任务
+    (async () => {
+      try {
+        // 按顺序执行所有DeFiLlama同步任务
+        console.log("开始同步DeFiLlama协议数据...");
+        await defiLlamaSyncService.syncProtocols();
+
+        console.log("开始同步DeFiLlama资金池数据...");
+        await defiLlamaSyncService.syncPools();
+
+        console.log("开始同步DeFiLlama稳定币数据...");
+        await defiLlamaSyncService.syncStablecoins();
+
+        console.log("DeFiLlama全部数据同步已完成");
+      } catch (error) {
+        console.error("后台DeFiLlama数据同步失败:", error);
+      }
+    })();
+
+    return c.json({
+      success: true,
+      message: "DeFiLlama全部数据同步任务已启动",
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    console.error("启动DeFiLlama数据同步失败:", error);
+    return c.json(
+      {
+        success: false,
+        message: "启动DeFiLlama数据同步失败",
+        error: error instanceof Error ? error.message : String(error),
+        timestamp: new Date().toISOString(),
+      },
+      500
+    );
+  }
+});
+
+api.get("/cron/coingecko-all", async (c) => {
+  try {
+    console.log("启动CoinGecko全部数据异步同步");
+
+    // 立即开始后台异步任务
+    (async () => {
+      try {
+        // 按顺序执行所有CoinGecko同步任务
+        console.log("开始同步CoinGecko币种列表数据...");
+        await coinGeckoService.syncCoinsListAndPlatforms();
+
+        console.log("开始同步CoinGecko热门币种数据...");
+        await coinGeckoService.syncTrendingCoinsCacheAndDetails();
+
+        console.log("CoinGecko全部数据同步已完成");
+      } catch (error) {
+        console.error("后台CoinGecko数据同步失败:", error);
+      }
+    })();
+
+    return c.json({
+      success: true,
+      message: "CoinGecko全部数据同步任务已启动",
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    console.error("启动CoinGecko数据同步失败:", error);
+    return c.json(
+      {
+        success: false,
+        message: "启动CoinGecko数据同步失败",
+        error: error instanceof Error ? error.message : String(error),
+        timestamp: new Date().toISOString(),
+      },
+      500
+    );
+  }
+});
+
+// 添加用于处理外部API调用的同步接口
+api.get("/cron/defillama-protocols", async (c) => {
+  try {
+    console.log("启动DeFiLlama协议数据异步同步");
+
+    // 立即开始后台异步任务
+    (async () => {
+      try {
+        await defiLlamaSyncService.syncProtocols();
+        console.log("DeFiLlama协议数据同步已完成");
+      } catch (error) {
+        console.error("后台DeFiLlama协议数据同步失败:", error);
+      }
+    })();
+
+    return c.json({
+      success: true,
+      message: "DeFiLlama协议数据同步任务已启动",
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    console.error("启动DeFiLlama协议数据同步失败:", error);
+    return c.json(
+      {
+        success: false,
+        message: "启动DeFiLlama协议数据同步失败",
+        error: error instanceof Error ? error.message : String(error),
+        timestamp: new Date().toISOString(),
+      },
+      500
+    );
+  }
+});
+
+api.get("/cron/defillama-pools", async (c) => {
+  try {
+    console.log("启动DeFiLlama资金池数据异步同步");
+
+    // 立即开始后台异步任务
+    (async () => {
+      try {
+        await defiLlamaSyncService.syncPools();
+        console.log("DeFiLlama资金池数据同步已完成");
+      } catch (error) {
+        console.error("后台DeFiLlama资金池数据同步失败:", error);
+      }
+    })();
+
+    return c.json({
+      success: true,
+      message: "DeFiLlama资金池数据同步任务已启动",
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    console.error("启动DeFiLlama资金池数据同步失败:", error);
+    return c.json(
+      {
+        success: false,
+        message: "启动DeFiLlama资金池数据同步失败",
+        error: error instanceof Error ? error.message : String(error),
+        timestamp: new Date().toISOString(),
+      },
+      500
+    );
+  }
+});
+
+api.get("/cron/defillama-stablecoins", async (c) => {
+  try {
+    console.log("启动DeFiLlama稳定币数据异步同步");
+
+    // 立即开始后台异步任务
+    (async () => {
+      try {
+        await defiLlamaSyncService.syncStablecoins();
+        console.log("DeFiLlama稳定币数据同步已完成");
+      } catch (error) {
+        console.error("后台DeFiLlama稳定币数据同步失败:", error);
+      }
+    })();
+
+    return c.json({
+      success: true,
+      message: "DeFiLlama稳定币数据同步任务已启动",
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    console.error("启动DeFiLlama稳定币数据同步失败:", error);
+    return c.json(
+      {
+        success: false,
+        message: "启动DeFiLlama稳定币数据同步失败",
+        error: error instanceof Error ? error.message : String(error),
+        timestamp: new Date().toISOString(),
+      },
+      500
+    );
+  }
+});
+
+api.get("/cron/coingecko-coins", async (c) => {
+  try {
+    console.log("启动CoinGecko币种列表异步同步");
+
+    // 立即开始后台异步任务
+    (async () => {
+      try {
+        await coinGeckoService.syncCoinsListAndPlatforms();
+        console.log("CoinGecko币种列表同步已完成");
+      } catch (error) {
+        console.error("后台CoinGecko币种列表同步失败:", error);
+      }
+    })();
+
+    return c.json({
+      success: true,
+      message: "CoinGecko币种列表同步任务已启动",
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    console.error("启动CoinGecko币种列表同步失败:", error);
+    return c.json(
+      {
+        success: false,
+        message: "启动CoinGecko币种列表同步失败",
+        error: error instanceof Error ? error.message : String(error),
+        timestamp: new Date().toISOString(),
+      },
+      500
+    );
+  }
+});
+
+api.get("/cron/coingecko-trending", async (c) => {
+  try {
+    console.log("启动CoinGecko热门币种异步同步");
+
+    // 立即开始后台异步任务
+    (async () => {
+      try {
+        await coinGeckoService.syncTrendingCoinsCacheAndDetails();
+        console.log("CoinGecko热门币种同步已完成");
+      } catch (error) {
+        console.error("后台CoinGecko热门币种同步失败:", error);
+      }
+    })();
+
+    return c.json({
+      success: true,
+      message: "CoinGecko热门币种同步任务已启动",
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    console.error("启动CoinGecko热门币种同步失败:", error);
+    return c.json(
+      {
+        success: false,
+        message: "启动CoinGecko热门币种同步失败",
+        error: error instanceof Error ? error.message : String(error),
+        timestamp: new Date().toISOString(),
+      },
+      500
+    );
+  }
+});
+
 app.route("/", api);
 
-// 在开发环境下，服务启动时初始化应用
-if (process.env.NODE_ENV === "development") {
-  // 启动定时任务
+// 设置定时同步任务
+function setupSyncTasks() {
+  // 设置 DeFiLlama 数据同步定时任务
   setupDefiLlamaSyncCronJobs();
-  console.log("Development environment: Data sync cron jobs started.");
 
-  // 开发环境启动时，立即执行一次核心数据同步
-  (async () => {
-    console.log("Development environment: Starting initial data sync...");
+  // 设置 CoinGecko 数据同步定时任务
+  setupCoinGeckoSyncCronJobs();
 
-    // DeFiLlama Sync
-    try {
-      console.log("Development environment: Starting DeFiLlama data sync...");
-      await defiLlamaSyncService.syncProtocols();
-      await defiLlamaSyncService.syncPools();
-      // await defiLlamaSyncService.syncStablecoins();
-      console.log("Development environment: DeFiLlama data sync completed.");
-    } catch (error) {
-      console.error(
-        "Development environment: DeFiLlama data sync failed:",
-        error
-      );
-    }
+  console.log("数据同步定时任务设置完成");
+}
 
-    // CoinGecko Sync
-    try {
-      console.log("Development environment: Starting CoinGecko data sync...");
-      await coinGeckoService.syncCoinsListAndPlatforms(); // Uses shared instance
-      await coinGeckoService.syncTrendingCoinsCacheAndDetails(); // Uses shared instance
-      console.log("Development environment: CoinGecko data sync completed.");
-    } catch (error) {
-      console.error(
-        "Development environment: CoinGecko data sync failed:",
-        error
-      );
-    }
-    console.log("Development environment: Initial data sync process finished.");
-  })();
-} else {
-  // 生产环境逻辑
-  console.log(
-    "Production environment: Data sync tasks will be managed by cron triggers."
-  );
+// 启动时，立即执行一次核心数据同步
+const initialDataSync = async () => {
+  console.log("Development environment: Starting initial data sync...");
+
+  // DeFiLlama Sync
+  try {
+    console.log("Development environment: Starting DeFiLlama data sync...");
+    await defiLlamaSyncService.syncProtocols();
+    await defiLlamaSyncService.syncPools();
+    // await defiLlamaSyncService.syncStablecoins();
+    console.log("Development environment: DeFiLlama data sync completed.");
+  } catch (error) {
+    console.error(
+      "Development environment: DeFiLlama data sync failed:",
+      error
+    );
+  }
+
+  // CoinGecko Sync
+  try {
+    console.log("Development environment: Starting CoinGecko data sync...");
+    await coinGeckoService.syncCoinsListAndPlatforms(); // Uses shared instance
+    await coinGeckoService.syncTrendingCoinsCacheAndDetails(); // Uses shared instance
+    console.log("Development environment: CoinGecko data sync completed.");
+  } catch (error) {
+    console.error(
+      "Development environment: CoinGecko data sync failed:",
+      error
+    );
+  }
+  console.log("Development environment: Initial data sync process finished.");
+};
+
+initialDataSync();
+
+if (process.env.NODE_ENV === "production") {
+  // 生产环境逻辑 - 设置定时任务
+  console.log("Production environment: Setting up data sync cron jobs");
+  setupSyncTasks();
 }
 
 // 启动服务器

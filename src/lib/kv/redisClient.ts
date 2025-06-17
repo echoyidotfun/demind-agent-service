@@ -2,6 +2,44 @@ import { createClient, RedisClientType } from "redis";
 
 let redisClient: RedisClientType | null = null;
 let clientPromise: Promise<RedisClientType> | null = null;
+let reconnectAttempts = 0;
+const MAX_RECONNECT_ATTEMPTS = 5;
+const RECONNECT_DELAY_MS = 5000; // 5秒
+
+// 生产环境和开发环境配置
+const getRedisConfig = () => {
+  const baseConfig = {
+    url: process.env.REDIS_URL,
+    socket: {
+      reconnectStrategy: (retries: number) => {
+        if (retries > MAX_RECONNECT_ATTEMPTS) {
+          console.error(
+            `Redis连接失败，已达到最大重试次数(${MAX_RECONNECT_ATTEMPTS})`
+          );
+          return new Error("Redis连接重试次数已用完");
+        }
+
+        // 指数退避策略，但最长不超过30秒
+        const delay = Math.min(Math.pow(2, retries) * 1000, 30000);
+        console.log(
+          `Redis连接断开，${delay}毫秒后重试 (尝试 ${retries}/${MAX_RECONNECT_ATTEMPTS})`
+        );
+        return delay;
+      },
+      connectTimeout: 10000, // 10秒连接超时
+    },
+  };
+
+  if (process.env.NODE_ENV === "production") {
+    return {
+      ...baseConfig,
+      // 生产环境特定配置
+      disableOfflineQueue: false, // Serverless环境中，允许离线队列
+    };
+  }
+
+  return baseConfig;
+};
 
 async function getConnectedClient(): Promise<RedisClientType> {
   if (redisClient && redisClient.isOpen) {
@@ -10,30 +48,55 @@ async function getConnectedClient(): Promise<RedisClientType> {
 
   if (!clientPromise) {
     if (!process.env.REDIS_URL) {
-      throw new Error("REDIS_URL environment variable is not set.");
+      throw new Error("REDIS_URL环境变量未设置");
     }
-    const newClient = createClient({
-      url: process.env.REDIS_URL,
+
+    const newClient = createClient(getRedisConfig());
+
+    // 监听事件
+    newClient.on("error", (err) => {
+      console.error("Redis客户端错误:", err);
+    });
+
+    newClient.on("reconnecting", () => {
+      console.log("Redis尝试重新连接...");
+    });
+
+    newClient.on("connect", () => {
+      console.log("Redis已建立连接");
+      reconnectAttempts = 0; // 重置重试计数
     });
 
     clientPromise = newClient
       .connect()
       .then((connectedClient: any) => {
         redisClient = connectedClient as RedisClientType;
-        console.log("Successfully connected to Redis.");
-        // Handle client errors after connection
-        redisClient.on("error", (err) =>
-          console.error("Redis Client Error", err)
-        );
+        console.log("Redis连接成功");
         return redisClient;
       })
       .catch((err) => {
-        console.error("Failed to connect to Redis:", err);
-        clientPromise = null; // Reset promise on failure to allow retry
+        console.error("Redis连接失败:", err);
+        clientPromise = null; // 重置Promise以允许重试
         throw err;
       });
   }
   return clientPromise;
+}
+
+// 添加连接检查功能
+export async function checkRedisConnection(): Promise<boolean> {
+  try {
+    const client = await getConnectedClient();
+    // 设置测试键
+    const testKey = "health_check_" + Date.now();
+    await client.set(testKey, "ok", { EX: 5 });
+    const value = await client.get(testKey);
+    await client.del(testKey);
+    return value === "ok";
+  } catch (error) {
+    console.error("Redis连接检查失败:", error);
+    return false;
+  }
 }
 
 // Wrapper object that mimics the @vercel/kv client API for get and set
@@ -148,12 +211,6 @@ export const redis = {
     return client.del(key);
   },
 
-  // You can add other Redis commands here as needed, e.g.:
-  // async incr(key: string): Promise<number> {
-  //   const client = await getConnectedClient();
-  //   return client.incr(key);
-  // },
-
   // Expose a way to explicitly close the connection if needed (e.g., for tests or shutdown)
   async quit(): Promise<void> {
     if (clientPromise) {
@@ -162,9 +219,9 @@ export const redis = {
         await client.quit();
         redisClient = null;
         clientPromise = null;
-        console.log("Redis connection closed.");
+        console.log("Redis连接已关闭");
       } catch (err) {
-        console.error("Error closing Redis connection:", err);
+        console.error("关闭Redis连接时出错:", err);
       }
     }
   },

@@ -1,101 +1,77 @@
 import { CronJob } from "cron";
 import { DeFiLlamaSyncService } from "../../services/defiLlamaSync.service";
 import { prisma } from "../db/prismaClient";
+import { executeSyncTask } from "./syncUtils";
 
+/**
+ * 设置 DeFiLlama 数据同步的定时任务
+ * - 协议列表 (Protocols): 每 12 小时同步一次
+ * - 流动性池 (Pools): 每 4 小时同步一次
+ * - 稳定币 (Stablecoins): 每天同步一次
+ */
 export function setupDefiLlamaSyncCronJobs() {
   const defillamaSyncService = new DeFiLlamaSyncService();
 
-  // 每天凌晨 1 点同步协议数据（完整同步，频率较低）
+  // 每 12 小时在 15 分同步协议数据
   new CronJob(
-    "0 1 * * *",
+    "15 */12 * * *",
     async () => {
-      console.log(
-        "DeFiLlamaSyncTask: Executing DeFiLlama protocol data daily sync..."
-      );
-      try {
-        await defillamaSyncService.syncProtocols();
-      } catch (error) {
-        console.error(
-          "DeFiLlamaSyncTask: DeFiLlama protocol data sync failed:",
-          error
-        );
-      }
-    },
-    null,
-    true
-  );
-
-  // 每 4 小时同步资金池数据（APY 变化较快）
-  new CronJob(
-    "0 */4 * * *",
-    async () => {
-      console.log("DeFiLlamaSyncTask: Executing DeFiLlama pool data sync...");
-      try {
-        await defillamaSyncService.syncPools();
-      } catch (error) {
-        console.error(
-          "DeFiLlamaSyncTask: DeFi Llama pool data sync failed:",
-          error
-        );
-      }
-    },
-    null,
-    true
-  );
-
-  // 每小时同步高收益/高 TVL 资金池的历史数据
-  new CronJob(
-    "0 * * * *",
-    async () => {
-      console.log(
-        "DeFiLlamaSyncTask: Executing DeFi Llama high-yield pool historical data sync..."
-      );
-      try {
-        // 每小时只查询最新的高收益池子
-        const topPools = await prisma.pool.findMany({
-          where: {
-            tvlUsd: { gt: 1000000 }, // TVL > $1M
-            apy: { gt: 10 }, // APY > 10%
-          },
-          orderBy: { apy: "desc" },
-          take: 20,
-        });
-
-        for (const pool of topPools) {
-          await defillamaSyncService.syncPoolChart(pool.id);
+      await executeSyncTask(
+        "DeFiLlama协议同步",
+        async () => {
+          console.log("DeFiLlamaSyncTask: 执行 DeFiLlama 协议数据同步...");
+          const result = await defillamaSyncService.syncProtocols();
+          console.log("DeFiLlamaSyncTask: DeFiLlama 协议数据同步完成");
+          return result;
+        },
+        {
+          maxRetries: 3,
+          initialDelay: 10000, // 10秒
+          backoffFactor: 2,
         }
-      } catch (error) {
-        console.error(
-          "DeFiLlamaSyncTask: DeFi Llama pool historical data sync failed:",
-          error
-        );
-      }
-    },
-    null,
-    true
-  );
-
-  // 每 6 小时同步稳定币数据
-  new CronJob(
-    "0 */6 * * *",
-    async () => {
-      console.log(
-        "DeFiLlamaSyncTask: Executing DeFiLlama stablecoin data sync..."
       );
-      try {
-        await defillamaSyncService.syncStablecoins();
-      } catch (error) {
-        console.error(
-          "DeFiLlamaSyncTask: DeFiLlama stablecoin data sync failed:",
-          error
-        );
-      }
     },
     null,
     true
   );
 
-  console.log(
-    "DeFiLlamaSyncTask: DeFiLlama data sync cron jobs set up successfully."
+  // 每 4 小时在 45 分同步资金池数据（APY 变化较快）
+  new CronJob(
+    "45 */4 * * *",
+    async () => {
+      await executeSyncTask(
+        "DeFiLlama资金池同步",
+        async () => {
+          console.log("DeFiLlamaSyncTask: 执行 DeFiLlama 资金池数据同步...");
+          const result = await defillamaSyncService.syncPools();
+          console.log("DeFiLlamaSyncTask: DeFiLlama 资金池数据同步完成");
+          return result;
+        },
+        {
+          maxRetries: 2,
+          initialDelay: 15000, // 15秒
+          backoffFactor: 2,
+        }
+      );
+    },
+    null,
+    true
   );
+
+  // 每天凌晨 3 点同步稳定币数据
+  new CronJob(
+    "0 3 * * *",
+    async () => {
+      await executeSyncTask("DeFiLlama稳定币同步", async () => {
+        console.log("DeFiLlamaSyncTask: 执行 DeFiLlama 稳定币数据同步...");
+        const result = await defillamaSyncService.syncStablecoins();
+        console.log("DeFiLlamaSyncTask: DeFiLlama 稳定币数据同步完成");
+        return result;
+      });
+    },
+    null,
+    true
+  );
+
+  console.log("DeFiLlamaSyncTask: DeFiLlama 数据同步定时任务设置成功");
 }

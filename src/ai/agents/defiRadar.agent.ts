@@ -313,7 +313,7 @@ For each trending token, you should:
 
 1. Carefully analyze the token based on multiple criteria and assign a single overall score (1-10 scale, higher is better):
 
-   a. COMMUNITY: Evaluate community engagement using web presence, social media activity (Twitter, Telegram, Subreddit), developer activity (GitHub), sentiment (sentimentVotesUpPercentage), and market interest (watchlistPortfolioUsers).
+   a. COMMUNITY: Evaluate community engagement using web presence, social media activity (Twitter, Telegram), developer activity (GitHub), sentiment (sentimentVotesUpPercentage), and market interest (watchlistPortfolioUsers).
       
    b. MARKET CAP: Assess market capitalization considering absolute value, market cap rank, and fully diluted valuation ratio.
 

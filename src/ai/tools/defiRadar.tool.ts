@@ -45,6 +45,8 @@ interface OutputSchemaProtocol {
   twitter: string | null;
   github: string | null;
   tvl: number | null;
+  change1d: number | null;
+  change7d: number | null;
   listedAt: Date | null;
 }
 
@@ -60,7 +62,6 @@ interface OutputSchemaToken {
   twitter: string | null;
   telegram: string | null;
   github: string | null;
-  subreddit: string | null;
   sentimentVotesUpPercentage: number;
   watchlistPortfolioUsers: number;
   marketCapRank: number | null;
@@ -143,6 +144,8 @@ const protocolSchema = z.object({
   twitter: z.string().nullable().describe("Protocol Twitter handle"),
   github: z.string().nullable().describe("Protocol GitHub URL"),
   tvl: z.number().nullable().describe("Total Value Locked across all pools"),
+  change1d: z.number().nullable().describe("1-day TVL change"),
+  change7d: z.number().nullable().describe("7-day TVL change"),
   listedAt: z
     .string()
     .nullable()
@@ -161,7 +164,6 @@ const tokenSchema = z.object({
   twitter: z.string().nullable().describe("Token Twitter handle"),
   telegram: z.string().nullable().describe("Token Telegram channel"),
   github: z.string().nullable().describe("Token GitHub repositories"),
-  subreddit: z.string().nullable().describe("Token subreddit URL"),
   sentimentVotesUpPercentage: z
     .number()
     .nullable()
@@ -403,7 +405,6 @@ async function collectTokenInfo(
             twitter: details.linksTwitterScreenName,
             telegram: details.linksTelegramChannelId,
             github: details.linksGithubRepos,
-            subreddit: details.linksSubredditUrl,
             sentimentVotesUpPercentage: details.sentimentVotesUpPercentage || 0,
             watchlistPortfolioUsers: details.watchlistPortfolioUsers || 0,
             marketCapRank: details.marketCapRank,
@@ -612,6 +613,8 @@ export const findDefiInvestmentOpportunitiesTool = createTool({
               twitter: true,
               github: true,
               tvl: true,
+              change1d: true,
+              change7d: true,
               listedAt: true,
             },
           },
@@ -656,6 +659,8 @@ export const findDefiInvestmentOpportunitiesTool = createTool({
             twitter: pool.protocol.twitter,
             github: pool.protocol.github,
             tvl: pool.protocol.tvl,
+            change1d: pool.protocol.change1d,
+            change7d: pool.protocol.change7d,
             listedAt: pool.protocol.listedAt,
           };
         }
@@ -910,6 +915,8 @@ export const findTrendingTokenPoolsTool = createTool({
                       twitter: true,
                       github: true,
                       tvl: true,
+                      change1d: true,
+                      change7d: true,
                       listedAt: true,
                     },
                   },
@@ -953,6 +960,8 @@ export const findTrendingTokenPoolsTool = createTool({
                   twitter: pool.protocol.twitter,
                   github: pool.protocol.github,
                   tvl: pool.protocol.tvl,
+                  change1d: pool.protocol.change1d,
+                  change7d: pool.protocol.change7d,
                   listedAt: pool.protocol.listedAt,
                 });
               }

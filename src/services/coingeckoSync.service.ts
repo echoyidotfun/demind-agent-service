@@ -376,7 +376,7 @@ export class CoinGeckoService {
 
       // 4. 从API获取新数据
       console.log(`Fetching new data from API for ${cgId}`);
-      const apiDetails = await this.coingeckoClient.getCoinDetailsFromApi(cgId);
+      const apiDetails = await this.coingeckoClient.getCoinDetails(cgId);
       if (!apiDetails) {
         console.log(
           `No API details available for ${cgId}, using DB record if available`

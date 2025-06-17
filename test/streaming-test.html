@@ -1,0 +1,1306 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>DeFi 分析流式传输测试</title>
+    <style>
+      body {
+        font-family: "PingFang SC", "Helvetica Neue", Arial, sans-serif;
+        margin: 0;
+        padding: 20px;
+        background-color: #f5f8fa;
+        color: #333;
+      }
+      .container {
+        max-width: 900px;
+        margin: 0 auto;
+        background: white;
+        padding: 20px;
+        border-radius: 8px;
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+      }
+      h1 {
+        color: #2c3e50;
+        margin-top: 0;
+      }
+      .form-group {
+        margin-bottom: 15px;
+      }
+      label {
+        display: block;
+        margin-bottom: 5px;
+        font-weight: bold;
+      }
+      input[type="text"] {
+        width: 100%;
+        padding: 8px;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        box-sizing: border-box;
+      }
+      button {
+        background-color: #3498db;
+        color: white;
+        border: none;
+        padding: 10px 15px;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 16px;
+      }
+      button:hover {
+        background-color: #2980b9;
+      }
+      button:disabled {
+        background-color: #95a5a6;
+        cursor: not-allowed;
+      }
+      .status-container {
+        margin-top: 20px;
+        padding: 10px;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        background-color: #f9f9f9;
+      }
+      .connection-status {
+        padding: 8px;
+        margin-bottom: 10px;
+        border-radius: 4px;
+      }
+      .connected {
+        background-color: #d5f5e3;
+        border: 1px solid #2ecc71;
+      }
+      .disconnected {
+        background-color: #fadbd8;
+        border: 1px solid #e74c3c;
+      }
+      .connecting {
+        background-color: #fef9e7;
+        border: 1px solid #f39c12;
+      }
+      .events-log {
+        height: 300px;
+        overflow-y: auto;
+        border: 1px solid #ddd;
+        padding: 10px;
+        margin-top: 15px;
+        font-family: monospace;
+        background-color: #2c3e50;
+        color: #ecf0f1;
+      }
+      .log-entry {
+        margin-bottom: 5px;
+        padding-bottom: 5px;
+        border-bottom: 1px solid #444;
+      }
+      .event-start {
+        color: #2ecc71;
+      }
+      .event-progress {
+        color: #f39c12;
+      }
+      .event-complete {
+        color: #3498db;
+      }
+      .event-error {
+        color: #e74c3c;
+      }
+      .debug-tools {
+        margin-top: 20px;
+        padding: 10px;
+        background-color: #eee;
+        border-radius: 4px;
+      }
+      .network-info {
+        margin-top: 15px;
+        font-size: 14px;
+      }
+      .network-info pre {
+        background: #f1f1f1;
+        padding: 8px;
+        overflow: auto;
+      }
+      #result-container {
+        margin-top: 20px;
+      }
+      .pool-title {
+        font-size: 18px;
+        font-weight: bold;
+        color: #2c3e50;
+      }
+      .pool-protocol {
+        color: #7f8c8d;
+        font-size: 14px;
+        display: flex;
+        align-items: center;
+      }
+      .protocol-icon {
+        width: 18px;
+        height: 18px;
+        border-radius: 50%;
+        margin-right: 6px;
+        object-fit: cover;
+        background-color: #f0f0f0;
+      }
+      .pool-stats {
+        display: flex;
+        flex-wrap: wrap;
+        margin-bottom: 10px;
+        gap: 10px;
+      }
+      .stat-item {
+        background-color: #f8f9fa;
+        border-radius: 4px;
+        padding: 5px 10px;
+        font-size: 14px;
+      }
+      .scores {
+        display: flex;
+        gap: 10px;
+        margin-bottom: 10px;
+      }
+      .score {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        background-color: #f5f8fa;
+        border-radius: 4px;
+        padding: 8px;
+        width: 90px;
+      }
+      .score-value {
+        font-size: 22px;
+        font-weight: bold;
+      }
+      .score-label {
+        font-size: 12px;
+        color: #7f8c8d;
+      }
+      .safety {
+        color: #2ecc71;
+      }
+      .sustainability {
+        color: #3498db;
+      }
+      .overall {
+        color: #9b59b6;
+      }
+      .report-section {
+        margin-top: 10px;
+        border-top: 1px solid #eee;
+        padding-top: 10px;
+      }
+      .report-section h4 {
+        margin-top: 0;
+        margin-bottom: 5px;
+        color: #2c3e50;
+      }
+      .token-list {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 5px;
+        margin-top: 5px;
+      }
+      .token-item {
+        background-color: #e8f4fd;
+        border-radius: 4px;
+        padding: 3px 8px;
+        font-size: 13px;
+        color: #2980b9;
+        display: flex;
+        align-items: center;
+      }
+      .token-icon {
+        width: 16px;
+        height: 16px;
+        border-radius: 50%;
+        margin-right: 5px;
+        object-fit: cover;
+        background-color: #f0f0f0;
+      }
+      .empty-result {
+        padding: 20px;
+        text-align: center;
+        color: #7f8c8d;
+      }
+      .section-title {
+        margin-top: 20px;
+        margin-bottom: 10px;
+        padding-bottom: 5px;
+        border-bottom: 2px solid #3498db;
+        color: #2c3e50;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h1>DeFi 分析流式传输测试</h1>
+
+      <div class="form-group">
+        <label for="serverUrl">服务器 URL:</label>
+        <input
+          type="text"
+          id="serverUrl"
+          value="http://localhost:5500/api/v1/stream/defiRadarWorkflow"
+        />
+      </div>
+
+      <div class="form-group">
+        <label for="query">查询内容:</label>
+        <input type="text" id="query" value="推荐一些高收益的DeFi投资机会" />
+      </div>
+
+      <button id="startBtn">开始分析</button>
+      <button id="stopBtn" disabled>停止分析</button>
+
+      <div class="status-container">
+        <div id="connectionStatus" class="connection-status disconnected">
+          未连接
+        </div>
+
+        <div class="network-info">
+          <h3>连接信息:</h3>
+          <div id="network-details">未建立连接</div>
+        </div>
+
+        <h3>事件日志:</h3>
+        <div class="events-log" id="eventsLog"></div>
+      </div>
+
+      <div id="result-container">
+        <h3>分析结果:</h3>
+        <div id="results">等待分析完成...</div>
+      </div>
+
+      <div class="debug-tools">
+        <h3>调试工具</h3>
+        <div class="form-group">
+          <button id="checkCorsBtn">检查 CORS 配置</button>
+          <button id="pingServerBtn">Ping 服务器</button>
+        </div>
+        <div id="debug-output"></div>
+      </div>
+    </div>
+
+    <script>
+      // 全局变量
+      let eventSource = null;
+      let connectionTimeout = null;
+      let currentRunId = null; // 存储当前工作流的runId
+
+      // DOM 元素
+      const startBtn = document.getElementById("startBtn");
+      const stopBtn = document.getElementById("stopBtn");
+      const serverUrl = document.getElementById("serverUrl");
+      const queryInput = document.getElementById("query");
+      const connectionStatus = document.getElementById("connectionStatus");
+      const eventsLog = document.getElementById("eventsLog");
+      const resultsDiv = document.getElementById("results");
+      const networkDetails = document.getElementById("network-details");
+      const checkCorsBtn = document.getElementById("checkCorsBtn");
+      const pingServerBtn = document.getElementById("pingServerBtn");
+      const debugOutput = document.getElementById("debug-output");
+
+      // 添加事件日志
+      function logEvent(event, data, className = "") {
+        const now = new Date();
+        const timeStr =
+          now.toLocaleTimeString("zh-CN", { hour12: false }) +
+          "." +
+          now.getMilliseconds().toString().padStart(3, "0");
+
+        const logDiv = document.createElement("div");
+        logDiv.className = `log-entry ${className}`;
+
+        let content = `<strong>[${timeStr}] ${event}:</strong> `;
+
+        if (typeof data === "object") {
+          try {
+            content += JSON.stringify(data);
+          } catch (e) {
+            content += "[复杂对象]";
+          }
+        } else {
+          content += data;
+        }
+
+        logDiv.innerHTML = content;
+        eventsLog.appendChild(logDiv);
+        eventsLog.scrollTop = eventsLog.scrollHeight; // 自动滚动到底部
+      }
+
+      // 更新连接状态
+      function updateConnectionStatus(status, message) {
+        connectionStatus.className = `connection-status ${status}`;
+        connectionStatus.textContent = message;
+      }
+
+      // 显示网络详情
+      function showNetworkDetails(info) {
+        networkDetails.innerHTML = `<pre>${JSON.stringify(
+          info,
+          null,
+          2
+        )}</pre>`;
+      }
+
+      // 启动 SSE 连接
+      function startAnalysis() {
+        if (eventSource) {
+          logEvent("系统", "重置之前的连接", "event-error");
+          eventSource.close();
+          eventSource = null;
+        }
+
+        const query = queryInput.value.trim();
+        if (!query) {
+          logEvent("错误", "查询内容不能为空", "event-error");
+          return;
+        }
+
+        // 构建URL
+        let url = new URL(serverUrl.value);
+        url.searchParams.append("query", query);
+
+        logEvent("系统", `尝试连接到: ${url.toString()}`, "event-progress");
+        updateConnectionStatus("connecting", "正在连接...");
+
+        try {
+          // 创建 EventSource
+          eventSource = new EventSource(url.toString());
+
+          // 设置超时检测 (10秒)
+          connectionTimeout = setTimeout(() => {
+            if (eventSource && eventSource.readyState !== EventSource.OPEN) {
+              logEvent(
+                "错误",
+                "连接超时 - 10秒后未收到服务器响应",
+                "event-error"
+              );
+              updateConnectionStatus("disconnected", "连接超时");
+              eventSource.close();
+            }
+          }, 10000);
+
+          // 基本事件处理
+          eventSource.onopen = function () {
+            clearTimeout(connectionTimeout);
+            logEvent("系统", "连接已建立", "event-start");
+            updateConnectionStatus("connected", "已连接");
+
+            // 更新按钮状态
+            startBtn.disabled = true;
+            stopBtn.disabled = false;
+
+            // 显示连接信息
+            const connectionInfo = {
+              url: url.toString(),
+              readyState: eventSource.readyState,
+              withCredentials: eventSource.withCredentials,
+              time: new Date().toISOString(),
+            };
+            showNetworkDetails(connectionInfo);
+          };
+
+          eventSource.onerror = function (error) {
+            clearTimeout(connectionTimeout);
+            logEvent(
+              "错误",
+              `连接错误或已关闭: ${
+                error ? JSON.stringify(error) : "(详情不可用)"
+              }`,
+              "event-error"
+            );
+            updateConnectionStatus("disconnected", "连接已关闭");
+
+            // 更新按钮状态
+            startBtn.disabled = false;
+            stopBtn.disabled = true;
+          };
+
+          // 添加自定义事件监听器
+
+          // 连接成功
+          eventSource.addEventListener("connected", function (e) {
+            const data = JSON.parse(e.data);
+            logEvent("连接", data.status, "event-start");
+            // 存储服务器返回的runId
+            if (data.runId) {
+              currentRunId = data.runId;
+              logEvent(
+                "系统",
+                `工作流运行ID: ${currentRunId}`,
+                "event-progress"
+              );
+            }
+          });
+
+          // 开始分析
+          eventSource.addEventListener("start", function (e) {
+            const data = JSON.parse(e.data);
+            logEvent("开始", data.message, "event-start");
+            resultsDiv.innerHTML = "<p>分析开始进行中...</p>";
+          });
+
+          // 心跳事件
+          // eventSource.addEventListener('heartbeat', function(e) {
+          //     const data = JSON.parse(e.data);
+          //     logEvent('心跳', `服务器时间: ${data.time}`, 'event-progress');
+          // });
+
+          // 工作流进度更新
+          eventSource.addEventListener("workflowProgress", function (e) {
+            const data = JSON.parse(e.data);
+            let message;
+
+            if (data.stepId) {
+              message = `步骤: ${data.stepId} - ${data.stepStatus || "进行中"}`;
+              if (data.detail && data.detail.message) {
+                message += ` (${data.detail.message})`;
+              }
+
+              // 根据步骤ID设置不同的样式类
+              let className = "event-progress";
+              if (data.stepStatus === "start") {
+                className = "event-start";
+              } else if (data.stepStatus === "complete") {
+                className = "event-complete";
+              } else if (data.stepStatus === "failed") {
+                className = "event-error";
+              }
+
+              logEvent("进度", message, className);
+
+              // 如果有元数据，显示简略版本
+              if (data.data) {
+                const metaMessage = formatStepMetadata(data.stepId, data.data);
+                if (metaMessage) {
+                  logEvent("元数据", metaMessage, "event-progress");
+                }
+              }
+            } else {
+              message = data.message || `类型: ${data.type || "未知"}`;
+              logEvent("事件", message, "event-progress");
+            }
+          });
+
+          // 辅助函数：格式化步骤元数据
+          function formatStepMetadata(stepId, data) {
+            try {
+              switch (stepId) {
+                case "intent-recognition":
+                  return `识别到用户意图，使用工具: ${data.tool || "未知"}`;
+                case "tool-selector":
+                  return `选择了工具: ${
+                    data.selectedTool || "未知"
+                  }, 找到池子数量: ${data.poolsCount || 0}`;
+                default:
+                  return null;
+              }
+            } catch (error) {
+              return null;
+            }
+          }
+
+          // 步骤结果
+          eventSource.addEventListener("stepResults", function (e) {
+            const data = JSON.parse(e.data);
+            logEvent("步骤结果", data.summary, "event-progress");
+          });
+
+          // 完成事件
+          eventSource.addEventListener("complete", function (e) {
+            const data = JSON.parse(e.data);
+            logEvent("完成", "分析已完成", "event-complete");
+
+            // 显示结果
+            if (data.result) {
+              // 使用格式化函数渲染结果
+              renderDefiAnalysis(data.result);
+
+              // 添加查看原始数据的选项
+              const toggleBtn = document.createElement("button");
+              toggleBtn.textContent = "显示/隐藏原始数据";
+              toggleBtn.style.marginTop = "10px";
+              toggleBtn.onclick = function () {
+                const rawData = document.getElementById("raw-data");
+                rawData.style.display =
+                  rawData.style.display === "none" ? "block" : "none";
+              };
+
+              resultsDiv.appendChild(toggleBtn);
+
+              const rawDiv = document.createElement("pre");
+              rawDiv.id = "raw-data";
+              rawDiv.style.display = "none";
+              rawDiv.style.marginTop = "10px";
+              rawDiv.style.padding = "10px";
+              rawDiv.style.backgroundColor = "#f5f5f5";
+              rawDiv.style.borderRadius = "4px";
+              rawDiv.textContent = JSON.stringify(data.result, null, 2);
+              resultsDiv.appendChild(rawDiv);
+            } else {
+              resultsDiv.innerHTML = "<p>分析完成，但未返回结果数据</p>";
+            }
+
+            // 自动关闭连接
+            if (eventSource) {
+              eventSource.close();
+              eventSource = null;
+            }
+
+            // 重置runId
+            currentRunId = null;
+
+            // 更新按钮状态
+            startBtn.disabled = false;
+            stopBtn.disabled = true;
+            updateConnectionStatus("disconnected", "分析已完成");
+          });
+
+          // 添加中断事件处理
+          eventSource.addEventListener("aborted", function (e) {
+            const data = JSON.parse(e.data);
+            logEvent(
+              "中断",
+              data.message || "工作流已被用户中断",
+              "event-error"
+            );
+            resultsDiv.innerHTML = "<p>分析已被用户中断</p>";
+
+            // 关闭连接
+            if (eventSource) {
+              eventSource.close();
+              eventSource = null;
+            }
+
+            // 重置runId
+            currentRunId = null;
+
+            // 更新按钮状态
+            startBtn.disabled = false;
+            stopBtn.disabled = true;
+            updateConnectionStatus("disconnected", "分析已中断");
+          });
+
+          // 错误事件
+          eventSource.addEventListener("error", function (e) {
+            try {
+              const data = JSON.parse(e.data);
+              logEvent(
+                "错误",
+                `分析错误: ${data.message} - ${data.error || ""}`,
+                "event-error"
+              );
+              resultsDiv.innerHTML = `<p style="color: red">错误: ${data.message}</p>`;
+            } catch (err) {
+              logEvent(
+                "错误",
+                `处理错误事件失败: ${err.message}`,
+                "event-error"
+              );
+            }
+          });
+
+          // 默认消息处理
+          eventSource.onmessage = function (e) {
+            logEvent("未知事件", e.data, "event-progress");
+          };
+        } catch (err) {
+          clearTimeout(connectionTimeout);
+          logEvent("错误", `创建连接失败: ${err.message}`, "event-error");
+          updateConnectionStatus("disconnected", "连接失败");
+          startBtn.disabled = false;
+          stopBtn.disabled = true;
+        }
+      }
+
+      // 停止分析
+      async function stopAnalysis() {
+        if (eventSource) {
+          logEvent("系统", "正在中断工作流...", "event-progress");
+
+          if (currentRunId) {
+            try {
+              // 调用中断API
+              const abortUrl = new URL(serverUrl.value);
+              const baseUrl = abortUrl.href.substring(
+                0,
+                abortUrl.href.lastIndexOf("/")
+              );
+              const abortApiUrl = `${baseUrl}/abort/${currentRunId}`;
+
+              const response = await fetch(abortApiUrl, {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                },
+              });
+
+              const result = await response.json();
+              logEvent(
+                "系统",
+                `中断请求结果: ${result.message || JSON.stringify(result)}`,
+                "event-progress"
+              );
+            } catch (error) {
+              logEvent("错误", `中断请求失败: ${error.message}`, "event-error");
+              // 即使API调用失败，也关闭当前的连接
+              eventSource.close();
+              eventSource = null;
+              updateConnectionStatus("disconnected", "已断开连接");
+
+              // 更新按钮状态
+              startBtn.disabled = false;
+              stopBtn.disabled = true;
+            }
+          } else {
+            // 如果没有runId，仅关闭连接
+            logEvent("系统", "没有运行ID，直接关闭连接", "event-progress");
+            eventSource.close();
+            eventSource = null;
+            updateConnectionStatus("disconnected", "已断开连接");
+
+            // 更新按钮状态
+            startBtn.disabled = false;
+            stopBtn.disabled = true;
+          }
+        }
+      }
+
+      // 检查CORS配置
+      async function checkCors() {
+        debugOutput.innerHTML = "<p>正在检查CORS配置...</p>";
+
+        try {
+          // 发送OPTIONS请求检查CORS预检
+          const response = await fetch(serverUrl.value, {
+            method: "OPTIONS",
+            headers: {
+              Origin: window.location.origin,
+            },
+          });
+
+          const corsHeaders = {
+            "Access-Control-Allow-Origin": response.headers.get(
+              "Access-Control-Allow-Origin"
+            ),
+            "Access-Control-Allow-Methods": response.headers.get(
+              "Access-Control-Allow-Methods"
+            ),
+            "Access-Control-Allow-Headers": response.headers.get(
+              "Access-Control-Allow-Headers"
+            ),
+            "Access-Control-Max-Age": response.headers.get(
+              "Access-Control-Max-Age"
+            ),
+            "Access-Control-Allow-Credentials": response.headers.get(
+              "Access-Control-Allow-Credentials"
+            ),
+          };
+
+          debugOutput.innerHTML = `
+                    <h4>CORS配置检查结果:</h4>
+                    <pre>${JSON.stringify(corsHeaders, null, 2)}</pre>
+                    <p>状态码: ${response.status}</p>
+                `;
+        } catch (err) {
+          debugOutput.innerHTML = `
+                    <h4>CORS检查失败:</h4>
+                    <pre>${err.message}</pre>
+                `;
+        }
+      }
+
+      // Ping服务器
+      async function pingServer() {
+        debugOutput.innerHTML = "<p>正在Ping服务器...</p>";
+
+        try {
+          const url = new URL(serverUrl.value);
+          // 尝试ping路径上一级的健康检查端点
+          const baseUrl = url.href.substring(0, url.href.lastIndexOf("/"));
+          const pingUrl = `${baseUrl.substring(
+            0,
+            baseUrl.lastIndexOf("/")
+          )}/health`;
+
+          const startTime = performance.now();
+          const response = await fetch(pingUrl);
+          const endTime = performance.now();
+          const pingTime = endTime - startTime;
+
+          const data = await response.json();
+
+          debugOutput.innerHTML = `
+                    <h4>Ping结果:</h4>
+                    <p>URL: ${pingUrl}</p>
+                    <p>响应时间: ${pingTime.toFixed(1)}ms</p>
+                    <p>状态码: ${response.status}</p>
+                    <pre>${JSON.stringify(data, null, 2)}</pre>
+                `;
+        } catch (err) {
+          debugOutput.innerHTML = `
+                    <h4>Ping失败:</h4>
+                    <pre>${err.message}</pre>
+                `;
+        }
+      }
+
+      // 添加事件监听器
+      startBtn.addEventListener("click", startAnalysis);
+      stopBtn.addEventListener("click", stopAnalysis);
+      checkCorsBtn.addEventListener("click", checkCors);
+      pingServerBtn.addEventListener("click", pingServer);
+
+      // 渲染DeFi分析结果
+      function renderDefiAnalysis(result) {
+        resultsDiv.innerHTML = "";
+
+        // 创建主容器
+        const analysisContainer = document.createElement("div");
+        analysisContainer.className = "analysis-container";
+
+        // 添加样式
+        const style = document.createElement("style");
+        style.textContent = `
+          .analysis-container {
+            font-family: 'PingFang SC', 'Helvetica Neue', Arial, sans-serif;
+          }
+          .pool-card {
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 20px;
+            background-color: white;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+          }
+          .pool-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+          }
+          .pool-title {
+            font-size: 18px;
+            font-weight: bold;
+            color: #2c3e50;
+          }
+          .pool-protocol {
+            color: #7f8c8d;
+            font-size: 14px;
+            display: flex;
+            align-items: center;
+          }
+          .protocol-icon {
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            margin-right: 6px;
+            object-fit: cover;
+            background-color: #f0f0f0;
+          }
+          .pool-stats {
+            display: flex;
+            flex-wrap: wrap;
+            margin-bottom: 10px;
+            gap: 10px;
+          }
+          .stat-item {
+            background-color: #f8f9fa;
+            border-radius: 4px;
+            padding: 5px 10px;
+            font-size: 14px;
+          }
+          .scores {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 10px;
+          }
+          .score {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            background-color: #f5f8fa;
+            border-radius: 4px;
+            padding: 8px;
+            width: 90px;
+          }
+          .score-value {
+            font-size: 22px;
+            font-weight: bold;
+          }
+          .score-label {
+            font-size: 12px;
+            color: #7f8c8d;
+          }
+          .safety { color: #2ecc71; }
+          .sustainability { color: #3498db; }
+          .overall { color: #9b59b6; }
+          .report-section {
+            margin-top: 10px;
+            border-top: 1px solid #eee;
+            padding-top: 10px;
+          }
+          .report-section h4 {
+            margin-top: 0;
+            margin-bottom: 5px;
+            color: #2c3e50;
+          }
+          .token-list {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 5px;
+            margin-top: 5px;
+          }
+          .token-item {
+            background-color: #e8f4fd;
+            border-radius: 4px;
+            padding: 3px 8px;
+            font-size: 13px;
+            color: #2980b9;
+            display: flex;
+            align-items: center;
+          }
+          .token-icon {
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            margin-right: 5px;
+            object-fit: cover;
+            background-color: #f0f0f0;
+          }
+          .empty-result {
+            padding: 20px;
+            text-align: center;
+            color: #7f8c8d;
+          }
+          .section-title {
+            margin-top: 20px;
+            margin-bottom: 10px;
+            padding-bottom: 5px;
+            border-bottom: 2px solid #3498db;
+            color: #2c3e50;
+          }
+        `;
+        document.head.appendChild(style);
+
+        if (result.analysisReport) {
+          // 检查是普通投资机会还是热门代币分析
+          if ("analyses" in result.analysisReport) {
+            // 渲染普通投资机会
+            const analyses = result.analysisReport.analyses;
+            const poolsArray = result.pools || [];
+            const protocols = result.protocols || {};
+            const tokens = result.tokens || {};
+
+            const title = document.createElement("h3");
+            title.className = "section-title";
+            title.textContent = "DeFi投资机会分析";
+            analysisContainer.appendChild(title);
+
+            if (Object.keys(analyses).length === 0) {
+              const emptyMsg = document.createElement("div");
+              emptyMsg.className = "empty-result";
+              emptyMsg.textContent = "未找到符合条件的投资机会";
+              analysisContainer.appendChild(emptyMsg);
+            } else {
+              // 按照整体评分排序池子
+              const sortedPools = [...poolsArray].sort((a, b) => {
+                const scoreA = analyses[a.id]?.overallScore || 0;
+                const scoreB = analyses[b.id]?.overallScore || 0;
+                return scoreB - scoreA;
+              });
+
+              sortedPools.forEach((pool) => {
+                if (!analyses[pool.id]) return;
+
+                const analysis = analyses[pool.id];
+                const protocol = protocols[pool.protocol] || {
+                  name: "未知协议",
+                };
+
+                const poolCard = createPoolCard(
+                  pool,
+                  analysis,
+                  protocol,
+                  tokens
+                );
+                analysisContainer.appendChild(poolCard);
+              });
+            }
+          } else if ("trendingAnalyses" in result.analysisReport) {
+            // 渲染热门代币相关池子
+            const trendingAnalyses = result.analysisReport.trendingAnalyses;
+            const trending = result.trending || [];
+            const poolsArray = result.pools || [];
+            const protocols = result.protocols || {};
+            const tokens = result.tokens || {};
+
+            const title = document.createElement("h3");
+            title.className = "section-title";
+            title.textContent = "热门代币投资机会分析";
+            analysisContainer.appendChild(title);
+
+            if (Object.keys(trendingAnalyses).length === 0) {
+              const emptyMsg = document.createElement("div");
+              emptyMsg.className = "empty-result";
+              emptyMsg.textContent = "未找到热门代币相关的投资机会";
+              analysisContainer.appendChild(emptyMsg);
+            } else {
+              trending.forEach((trendingToken) => {
+                const trendingAnalysis = trendingAnalyses[trendingToken.cgId];
+                if (!trendingAnalysis) return;
+
+                const tokenInfo = tokens[trendingToken.cgId] || {};
+
+                // 创建代币卡片
+                const tokenCard = document.createElement("div");
+                tokenCard.className = "pool-card";
+
+                const tokenHeader = document.createElement("div");
+                tokenHeader.className = "pool-header";
+
+                const tokenTitle = document.createElement("div");
+                tokenTitle.className = "pool-title";
+                // 添加代币图标
+                const tokenIconWrapper = document.createElement("span");
+                tokenIconWrapper.style.display = "inline-flex";
+                tokenIconWrapper.style.alignItems = "center";
+
+                const tokenIcon = document.createElement("img");
+                tokenIcon.className = "token-icon";
+                tokenIcon.style.marginRight = "8px";
+                tokenIcon.style.width = "24px";
+                tokenIcon.style.height = "24px";
+                tokenIcon.src =
+                  tokenInfo.imageUrl || "https://via.placeholder.com/24";
+                tokenIcon.alt = trendingToken.symbol || "";
+                tokenIcon.onerror = function () {
+                  this.src = "https://via.placeholder.com/24";
+                };
+
+                tokenIconWrapper.appendChild(tokenIcon);
+                tokenIconWrapper.appendChild(
+                  document.createTextNode(
+                    `${trendingToken.name} (${trendingToken.symbol})`
+                  )
+                );
+                tokenTitle.appendChild(tokenIconWrapper);
+                tokenHeader.appendChild(tokenTitle);
+
+                const tokenRank = document.createElement("div");
+                tokenRank.className = "pool-protocol";
+                tokenRank.textContent = trendingToken.marketCapRank
+                  ? `排名: #${trendingToken.marketCapRank}`
+                  : "未排名";
+                tokenHeader.appendChild(tokenRank);
+
+                tokenCard.appendChild(tokenHeader);
+
+                // 添加代币评分
+                const tokenScore = document.createElement("div");
+                tokenScore.className = "scores";
+                tokenScore.style.justifyContent = "center";
+                tokenScore.style.margin = "10px 0";
+
+                const scoreDiv = document.createElement("div");
+                scoreDiv.className = "score";
+                scoreDiv.style.width = "120px";
+
+                // 根据评分范围决定颜色
+                let scoreColor;
+                const score = trendingAnalysis.tokenScore;
+                if (score >= 8) {
+                  scoreColor = "#2ecc71"; // 绿色
+                } else if (score >= 6) {
+                  scoreColor = "#3498db"; // 蓝色
+                } else if (score >= 4) {
+                  scoreColor = "#f39c12"; // 橙色
+                } else {
+                  scoreColor = "#e74c3c"; // 红色
+                }
+
+                // 获取风险等级
+                let riskLevel;
+                if (score >= 8) {
+                  riskLevel = "低风险";
+                } else if (score >= 6) {
+                  riskLevel = "中等风险";
+                } else if (score >= 4) {
+                  riskLevel = "高风险";
+                } else {
+                  riskLevel = "极高风险";
+                }
+
+                scoreDiv.innerHTML = `
+                  <div class="score-value" style="font-size: 28px; color: ${scoreColor};">${trendingAnalysis.tokenScore}</div>
+                  <div class="score-label">代币评分 (1-10)</div>
+                  <div style="margin-top: 5px; padding: 2px 8px; background-color: ${scoreColor}; color: white; border-radius: 10px; font-size: 12px;">${riskLevel}</div>
+                `;
+                tokenScore.appendChild(scoreDiv);
+                tokenCard.appendChild(tokenScore);
+
+                // 代币分析
+                const tokenAnalysis = document.createElement("div");
+                tokenAnalysis.className = "report-section";
+                tokenAnalysis.innerHTML = `<p>${trendingAnalysis.tokenAnalysis}</p>`;
+                tokenCard.appendChild(tokenAnalysis);
+
+                analysisContainer.appendChild(tokenCard);
+
+                // 添加该代币的相关池子
+                const poolsTitle = document.createElement("h4");
+                poolsTitle.style.marginLeft = "10px";
+                poolsTitle.textContent = `${trendingToken.name}相关池子:`;
+                analysisContainer.appendChild(poolsTitle);
+
+                // 获取该代币相关的池子
+                const relatedPoolAnalyses = trendingAnalysis.pools || {};
+                const relatedPoolIds = Object.keys(relatedPoolAnalyses);
+
+                if (relatedPoolIds.length === 0) {
+                  const emptyPoolMsg = document.createElement("div");
+                  emptyPoolMsg.className = "empty-result";
+                  emptyPoolMsg.textContent = "未找到相关池子";
+                  analysisContainer.appendChild(emptyPoolMsg);
+                } else {
+                  // 找出相关池子并按评分排序
+                  const relatedPools = poolsArray
+                    .filter((p) => relatedPoolIds.includes(p.id))
+                    .sort((a, b) => {
+                      const scoreA =
+                        relatedPoolAnalyses[a.id]?.overallScore || 0;
+                      const scoreB =
+                        relatedPoolAnalyses[b.id]?.overallScore || 0;
+                      return scoreB - scoreA;
+                    });
+
+                  relatedPools.forEach((pool) => {
+                    const analysis = relatedPoolAnalyses[pool.id];
+                    if (!analysis) return;
+
+                    const protocol = protocols[pool.protocol] || {
+                      name: "未知协议",
+                    };
+                    const poolCard = createPoolCard(
+                      pool,
+                      analysis,
+                      protocol,
+                      tokens
+                    );
+                    analysisContainer.appendChild(poolCard);
+                  });
+                }
+              });
+            }
+          }
+        } else {
+          // 没有分析报告
+          const emptyMsg = document.createElement("div");
+          emptyMsg.className = "empty-result";
+          emptyMsg.innerHTML =
+            "<h3>无法显示分析结果</h3><p>未找到可用的分析报告数据</p>";
+          analysisContainer.appendChild(emptyMsg);
+        }
+
+        resultsDiv.appendChild(analysisContainer);
+      }
+
+      // 创建池子卡片
+      function createPoolCard(pool, analysis, protocol, tokens) {
+        const poolCard = document.createElement("div");
+        poolCard.className = "pool-card";
+
+        // 池子信息头部
+        const header = document.createElement("div");
+        header.className = "pool-header";
+
+        const title = document.createElement("div");
+        title.className = "pool-title";
+        title.textContent = pool.symbol || "未命名池子";
+        header.appendChild(title);
+
+        const protocolName = document.createElement("div");
+        protocolName.className = "pool-protocol";
+
+        // 添加协议图标
+        const protocolIcon = document.createElement("img");
+        protocolIcon.className = "protocol-icon";
+        protocolIcon.src = protocol.logo || "https://via.placeholder.com/18";
+        protocolIcon.alt = protocol.name || "";
+        protocolIcon.onerror = function () {
+          this.src = "https://via.placeholder.com/18";
+        };
+
+        protocolName.appendChild(protocolIcon);
+        protocolName.appendChild(
+          document.createTextNode(
+            `${protocol.name || "未知协议"} (${pool.chain})`
+          )
+        );
+        header.appendChild(protocolName);
+
+        poolCard.appendChild(header);
+
+        // 池子主要数据
+        const stats = document.createElement("div");
+        stats.className = "pool-stats";
+
+        const tvl = document.createElement("div");
+        tvl.className = "stat-item";
+        tvl.innerHTML = `<strong>TVL:</strong> $${formatNumber(pool.tvlUsd)}`;
+        stats.appendChild(tvl);
+
+        const apy = document.createElement("div");
+        apy.className = "stat-item";
+        apy.innerHTML = `<strong>APY:</strong> ${pool.apy?.toFixed(2)}%`;
+        stats.appendChild(apy);
+
+        if (pool.apyBase !== null) {
+          const apyBase = document.createElement("div");
+          apyBase.className = "stat-item";
+          apyBase.innerHTML = `<strong>基础APY:</strong> ${pool.apyBase?.toFixed(
+            2
+          )}%`;
+          stats.appendChild(apyBase);
+        }
+
+        if (pool.apyReward !== null) {
+          const apyReward = document.createElement("div");
+          apyReward.className = "stat-item";
+          apyReward.innerHTML = `<strong>奖励APY:</strong> ${pool.apyReward?.toFixed(
+            2
+          )}%`;
+          stats.appendChild(apyReward);
+        }
+
+        poolCard.appendChild(stats);
+
+        // 评分
+        const scores = document.createElement("div");
+        scores.className = "scores";
+
+        const safetyScore = document.createElement("div");
+        safetyScore.className = "score";
+        safetyScore.innerHTML = `
+          <div class="score-value safety">${analysis.safetyScore}</div>
+          <div class="score-label">安全评分</div>
+        `;
+        scores.appendChild(safetyScore);
+
+        const sustainabilityScore = document.createElement("div");
+        sustainabilityScore.className = "score";
+        sustainabilityScore.innerHTML = `
+          <div class="score-value sustainability">${analysis.sustainabilityScore}</div>
+          <div class="score-label">可持续性</div>
+        `;
+        scores.appendChild(sustainabilityScore);
+
+        const overallScore = document.createElement("div");
+        overallScore.className = "score";
+        overallScore.innerHTML = `
+          <div class="score-value overall">${analysis.overallScore}</div>
+          <div class="score-label">综合评分</div>
+        `;
+        scores.appendChild(overallScore);
+
+        poolCard.appendChild(scores);
+
+        // 代币列表
+        if (pool.underlyingTokens && pool.underlyingTokens.length) {
+          const tokenSection = document.createElement("div");
+          tokenSection.innerHTML = "<strong>底层代币:</strong>";
+
+          const tokenList = document.createElement("div");
+          tokenList.className = "token-list";
+
+          pool.underlyingTokens.forEach((token) => {
+            if (token.cgId && tokens[token.cgId]) {
+              const tokenInfo = tokens[token.cgId];
+              const tokenItem = document.createElement("div");
+              tokenItem.className = "token-item";
+
+              // 添加代币图标
+              const tokenIcon = document.createElement("img");
+              tokenIcon.className = "token-icon";
+              tokenIcon.src =
+                tokenInfo.imageUrl || "https://via.placeholder.com/16";
+              tokenIcon.alt = tokenInfo.symbol || "";
+              tokenIcon.onerror = function () {
+                this.src = "https://via.placeholder.com/16";
+              };
+
+              tokenItem.appendChild(tokenIcon);
+              tokenItem.appendChild(
+                document.createTextNode(
+                  tokenInfo.name || tokenInfo.symbol || token.cgId
+                )
+              );
+              tokenList.appendChild(tokenItem);
+            }
+          });
+
+          tokenSection.appendChild(tokenList);
+          poolCard.appendChild(tokenSection);
+        }
+
+        // 分析报告
+        const report = analysis.report;
+
+        if (report.overview) {
+          const overview = document.createElement("div");
+          overview.className = "report-section";
+          overview.innerHTML = `<h4>概览</h4><p>${report.overview}</p>`;
+          poolCard.appendChild(overview);
+        }
+
+        if (report.tokenAnalysis) {
+          const tokenAnalysis = document.createElement("div");
+          tokenAnalysis.className = "report-section";
+          tokenAnalysis.innerHTML = `<h4>代币分析</h4><p>${report.tokenAnalysis}</p>`;
+          poolCard.appendChild(tokenAnalysis);
+        }
+
+        if (report.yieldAndLiquidity) {
+          const yieldAnalysis = document.createElement("div");
+          yieldAnalysis.className = "report-section";
+          yieldAnalysis.innerHTML = `<h4>收益与流动性</h4><p>${report.yieldAndLiquidity}</p>`;
+          poolCard.appendChild(yieldAnalysis);
+        }
+
+        if (report.riskWarnings) {
+          const risks = document.createElement("div");
+          risks.className = "report-section";
+          risks.style.backgroundColor = "#fff8f8";
+          risks.style.borderLeft = "3px solid #e74c3c";
+          risks.style.padding = "10px";
+          risks.innerHTML = `<h4>风险警告</h4><p>${report.riskWarnings}</p>`;
+          poolCard.appendChild(risks);
+        }
+
+        return poolCard;
+      }
+
+      // 数字格式化
+      function formatNumber(num) {
+        if (num === null || num === undefined) return "N/A";
+
+        if (num >= 1000000000) {
+          return (num / 1000000000).toFixed(2) + "B";
+        } else if (num >= 1000000) {
+          return (num / 1000000).toFixed(2) + "M";
+        } else if (num >= 1000) {
+          return (num / 1000).toFixed(2) + "K";
+        } else {
+          return num.toFixed(2);
+        }
+      }
+
+      // 初始状态设置
+      updateConnectionStatus("disconnected", "未连接");
+      logEvent("系统", "页面已加载，准备就绪", "event-start");
+    </script>
+  </body>
+</html>

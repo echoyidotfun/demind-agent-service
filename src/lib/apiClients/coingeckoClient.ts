@@ -304,7 +304,7 @@ export class CoingeckoClient {
     });
   }
 
-  async getCoinDetailsFromApi(coinId: string): Promise<ApiCoinDetail | null> {
+  async getCoinDetails(coinId: string): Promise<ApiCoinDetail | null> {
     return this.addToQueue(async () => {
       for (let attempt = 1; attempt <= this.MAX_RETRIES; attempt++) {
         try {

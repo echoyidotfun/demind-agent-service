@@ -93,8 +93,8 @@ const intentStep = createStep({
 });
 
 // Step 2: Dynamic Tool Execution
-const toolSelectorStep = createStep({
-  id: "tool-selector",
+const toolCallStep = createStep({
+  id: "tool-call",
   description: "Dynamically calls the selected DeFi Radar tool.",
   inputSchema: intentAgentOutputSchema, // Input is the output of intentStep
   outputSchema: toolSelectorStepOutputSchema, // Output is the result of the tool execution PLUS selected tool
@@ -120,6 +120,66 @@ const toolSelectorStep = createStep({
       throw new Error(`Unknown tool: ${tool}`);
     }
     return { toolOutput: toolResult, selectedTool: tool };
+  },
+});
+
+const agentGenerateReportStep = createStep({
+  id: "agent-generate-report",
+  inputSchema: toolSelectorStepOutputSchema,
+  outputSchema: z.object({
+    selectedTool: toolSelectorStepOutputSchema.shape.selectedTool,
+    originalToolOutput: toolSelectorStepOutputSchema.shape.toolOutput,
+    analysisReport: z.union([
+      reportGeneralAgentOutputSchema,
+      reportTrendingAgentOutputSchema,
+    ]),
+  }),
+  execute: async ({ inputData, mastra }) => {
+    // Added mastra context here
+    const { toolOutput, selectedTool } = inputData;
+    const { pools, protocols, tokens, trending } = toolOutput;
+
+    let analysisReport:
+      | z.infer<typeof reportGeneralAgentOutputSchema>
+      | z.infer<typeof reportTrendingAgentOutputSchema>;
+
+    if (selectedTool === "findDefiInvestmentOpportunities") {
+      const agent = mastra.getAgent("reportGeneralAgent");
+      const response = await agent.generate([
+        {
+          role: "user",
+          content: `Analyze the following DeFi pools: ${JSON.stringify({
+            pools,
+            protocols,
+            tokens,
+          })}`,
+        },
+      ]);
+      analysisReport =
+        "object" in response && response.object
+          ? (response.object as z.infer<typeof reportGeneralAgentOutputSchema>)
+          : []; // Fallback to empty array
+    } else {
+      // findTrendingTokenPools
+      const agent = mastra.getAgent("reportTrendingAgent");
+      const response = await agent.generate([
+        {
+          role: "user",
+          content: `Analyze the following trending token and DeFi pools: ${JSON.stringify(
+            { trending, pools, protocols, tokens }
+          )}`,
+        },
+      ]);
+      analysisReport =
+        "object" in response && response.object
+          ? (response.object as z.infer<typeof reportTrendingAgentOutputSchema>)
+          : []; // Fallback to empty array
+    }
+    return {
+      selectedTool,
+      originalToolOutput: toolOutput,
+      analysisReport,
+    };
   },
 });
 
@@ -355,72 +415,8 @@ export const defiRadarWorkflow = createWorkflow({
     })
   )
   .then(intentStep) // Output: { tool: "...", params: { ... } }
-  .then(toolSelectorStep) // Output: { toolOutput: defiRadarToolOutputSchema, selectedTool: "..." }
-  .then(
-    createStep({
-      id: "process-tool-output", // Renamed for clarity
-      inputSchema: toolSelectorStepOutputSchema,
-      outputSchema: z.object({
-        selectedTool: toolSelectorStepOutputSchema.shape.selectedTool,
-        originalToolOutput: toolSelectorStepOutputSchema.shape.toolOutput,
-        analysisReport: z.union([
-          reportGeneralAgentOutputSchema,
-          reportTrendingAgentOutputSchema,
-        ]),
-      }),
-      execute: async ({ inputData, mastra }) => {
-        // Added mastra context here
-        const { toolOutput, selectedTool } = inputData;
-        const { pools, protocols, tokens, trending } = toolOutput;
-
-        let analysisReport:
-          | z.infer<typeof reportGeneralAgentOutputSchema>
-          | z.infer<typeof reportTrendingAgentOutputSchema>;
-
-        if (selectedTool === "findDefiInvestmentOpportunities") {
-          const agent = mastra.getAgent("reportGeneralAgent");
-          const response = await agent.generate([
-            {
-              role: "user",
-              content: `Analyze the following DeFi pools: ${JSON.stringify({
-                pools,
-                protocols,
-                tokens,
-              })}`,
-            },
-          ]);
-          analysisReport =
-            "object" in response && response.object
-              ? (response.object as z.infer<
-                  typeof reportGeneralAgentOutputSchema
-                >)
-              : []; // Fallback to empty array
-        } else {
-          // findTrendingTokenPools
-          const agent = mastra.getAgent("reportTrendingAgent");
-          const response = await agent.generate([
-            {
-              role: "user",
-              content: `Analyze the following trending token and DeFi pools: ${JSON.stringify(
-                { trending, pools, protocols, tokens }
-              )}`,
-            },
-          ]);
-          analysisReport =
-            "object" in response && response.object
-              ? (response.object as z.infer<
-                  typeof reportTrendingAgentOutputSchema
-                >)
-              : []; // Fallback to empty array
-        }
-        return {
-          selectedTool,
-          originalToolOutput: toolOutput,
-          analysisReport,
-        };
-      },
-    })
-  )
-  .then(wrapAnalysisReportStep) // Wraps the analysis report
-  .then(finalDataFormatterStep) // Filters and assembles final data
+  .then(toolCallStep) // Output: { toolOutput: defiRadarToolOutputSchema, selectedTool: "..." }
+  .then(agentGenerateReportStep)
+  .then(wrapAnalysisReportStep)
+  .then(finalDataFormatterStep)
   .commit();

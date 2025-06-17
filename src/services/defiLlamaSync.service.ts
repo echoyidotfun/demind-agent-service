@@ -907,9 +907,9 @@ export class DeFiLlamaSyncService {
         );
       }
 
-      for (const pool of topPoolsToSync) {
-        await this.syncPoolChart(pool.id);
-      }
+      // for (const pool of topPoolsToSync) {
+      //   await this.syncPoolChart(pool.id);
+      // }
     } else {
       console.log(
         "Skipping historical data sync for priority pools because pool synchronization failed."
