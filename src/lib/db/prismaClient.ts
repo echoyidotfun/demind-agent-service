@@ -37,7 +37,6 @@ const prismaDevelopmentOptions: Prisma.PrismaClientOptions = {
   log: [
     { level: "error", emit: "stdout" },
     { level: "warn", emit: "stdout" },
-    { level: "info", emit: "stdout" }, // 添加更多日志级别以便调试
   ],
   // 开发环境连接池配置
   datasources: {

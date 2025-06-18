@@ -6,6 +6,38 @@ import { Decimal } from "@prisma/client/runtime/library";
 
 const coinGeckoService = new CoinGeckoService();
 
+const defiLlamaToCoinGeckoChainMap: Record<string, string> = {
+  arbitrum: "arbitrum-one",
+  bsc: "binance-smart-chain",
+  optimism: "optimistic-ethereum",
+  manta: "manta-pacific",
+};
+
+const coinGeckoToDefiLlamaChainMap: Record<string, string> = {
+  "arbitrum-one": "arbitrum",
+  "binance-smart-chain": "bsc",
+  "optimistic-ethereum": "optimism",
+  "manta-pacific": "manta",
+};
+
+/**
+ * 将DeFiLlama链名转换为CoinGecko链名
+ * @param defiLlamaChain DeFiLlama链名
+ * @returns CoinGecko链名
+ */
+function mapDefiLlamaToCoinGeckoChain(defiLlamaChain: string): string {
+  return defiLlamaToCoinGeckoChainMap[defiLlamaChain] || defiLlamaChain;
+}
+
+/**
+ * 将CoinGecko链名转换为DeFiLlama链名
+ * @param coinGeckoChain CoinGecko链名
+ * @returns DeFiLlama链名
+ */
+function mapCoinGeckoToDefiLlamaChain(coinGeckoChain: string): string {
+  return coinGeckoToDefiLlamaChainMap[coinGeckoChain] || coinGeckoChain;
+}
+
 // 定义标准化的接口结构
 interface OutputSchemaUnderlyingToken {
   cgId: string;
@@ -243,7 +275,9 @@ function buildPoolQueryConditions({
   };
 
   if (chain) {
-    whereClause.chain = chain;
+    const dlChain = mapCoinGeckoToDefiLlamaChain(chain);
+    // console.log(`Chain param mapping: ${chain} -> ${dlChain}`);
+    whereClause.chain = dlChain;
   }
 
   if (stablecoinOnly) {
@@ -294,12 +328,16 @@ async function collectTokenInfo(
           attempt++
         ) {
           if (attempt > 0) {
-            console.log(`Retry ${attempt} for ${token.chain}:${token.address}`);
+            // console.log(`Retry ${attempt} for ${token.chain}:${token.address}`);
             await new Promise((resolve) => setTimeout(resolve, 1000)); // 延迟1秒
           }
 
+          // 将DeFiLlama链名转换为CoinGecko链名
+          const cgChain = mapDefiLlamaToCoinGeckoChain(token.chain);
+          // console.log(`Chain mapping: ${token.chain} -> ${cgChain}`);
+
           basicInfo = await coinGeckoService.findCgInfoByPlatformContract(
-            token.chain,
+            cgChain,
             token.address
           );
         }
@@ -458,10 +496,11 @@ function formatPoolData(
     .map((token: { chain: string; tokenAddress: string }) => {
       const key = `${token.chain}:${token.tokenAddress}`;
       const cgId = addressToCgIdMap.get(key);
+
       return cgId
         ? {
             cgId,
-            chain: token.chain,
+            chain: token.chain, // 保持DeFiLlama格式的链名
             address: token.tokenAddress,
           }
         : null;
@@ -856,9 +895,14 @@ export const findTrendingTokenPoolsTool = createTool({
         ) {
           const cgId = trendingCgIds[index];
           result.value.forEach((platform) => {
+            const dlChain = mapCoinGeckoToDefiLlamaChain(platform.blockchainId);
+            // console.log(
+            //   `Chain mapping: ${platform.blockchainId} -> ${dlChain}`
+            // );
+
             contractAddresses.push({
               cgId,
-              chain: platform.blockchainId,
+              chain: dlChain, // 使用转换后的DeFiLlama链名
               address: platform.contractAddress.toLowerCase(),
             });
           });
