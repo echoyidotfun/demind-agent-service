@@ -1,10 +1,12 @@
 import { createClient, RedisClientType } from "redis";
 
+// 全局变量
 let redisClient: RedisClientType | null = null;
 let clientPromise: Promise<RedisClientType> | null = null;
 let reconnectAttempts = 0;
-const MAX_RECONNECT_ATTEMPTS = 5;
+const MAX_RECONNECT_ATTEMPTS = 10; // 增加到10次
 const RECONNECT_DELAY_MS = 5000; // 5秒
+const HEALTH_CHECK_INTERVAL_MS = 30000; // 30秒健康检查间隔
 
 // 生产环境和开发环境配置
 const getRedisConfig = () => {
@@ -26,20 +28,67 @@ const getRedisConfig = () => {
         );
         return delay;
       },
-      connectTimeout: 10000, // 10秒连接超时
+      connectTimeout: 15000, // 15秒连接超时
     },
+    // 避免在断线重连时出现堆积的命令
+    commandsQueueMaxLength: 5000,
+    // 启用离线队列
+    disableOfflineQueue: false,
+    // 添加性能优化
+    readonly: false, // 除非是只读应用，否则应设为false
   };
 
   if (process.env.NODE_ENV === "production") {
     return {
       ...baseConfig,
       // 生产环境特定配置
-      disableOfflineQueue: false, // Serverless环境中，允许离线队列
+      enableAutoPipelining: true, // 自动管道化提高吞吐量
     };
   }
 
   return baseConfig;
 };
+
+// 定期健康检查
+let healthCheckInterval: NodeJS.Timeout | null = null;
+
+// 启动健康检查
+function startHealthCheck() {
+  if (healthCheckInterval) {
+    clearInterval(healthCheckInterval);
+  }
+
+  healthCheckInterval = setInterval(async () => {
+    try {
+      const isConnected = await checkRedisConnection();
+      if (!isConnected) {
+        console.warn("Redis健康检查失败，尝试重新连接...");
+        // 强制重置连接
+        await resetConnection();
+      }
+    } catch (error) {
+      console.error("Redis健康检查出错:", error);
+    }
+  }, HEALTH_CHECK_INTERVAL_MS);
+
+  // 确保定时器不阻止进程退出
+  healthCheckInterval.unref();
+}
+
+// 重置连接的函数
+async function resetConnection(): Promise<void> {
+  try {
+    if (redisClient && redisClient.isOpen) {
+      await redisClient.quit();
+    }
+  } catch (error) {
+    console.error("关闭Redis连接失败:", error);
+  } finally {
+    redisClient = null;
+    clientPromise = null;
+    reconnectAttempts = 0;
+  }
+}
 
 async function getConnectedClient(): Promise<RedisClientType> {
   if (redisClient && redisClient.isOpen) {
@@ -65,6 +114,21 @@ async function getConnectedClient(): Promise<RedisClientType> {
     newClient.on("connect", () => {
       console.log("Redis已建立连接");
       reconnectAttempts = 0; // 重置重试计数
+    });
+
+    newClient.on("ready", () => {
+      console.log("Redis客户端已就绪");
+      // 启动健康检查
+      startHealthCheck();
+    });
+
+    newClient.on("end", () => {
+      console.log("Redis连接已终止");
+      // 清除健康检查
+      if (healthCheckInterval) {
+        clearInterval(healthCheckInterval);
+        healthCheckInterval = null;
+      }
     });
 
     clientPromise = newClient
@@ -137,13 +201,9 @@ export const redis = {
     const client = await getConnectedClient();
     const stringValue =
       typeof value === "string" ? value : JSON.stringify(value);
-    // The 'redis' package options for 'EX' are slightly different from @vercel/kv
-    // EX expects seconds. PX expects milliseconds.
-    // NX -- Only set the key if it does not already exist.
-    // XX -- Only set the key if it already exist.
     const redisOptions: any = {};
-    if (options?.ex) redisOptions.EX = options.ex; // seconds
-    if (options?.px) redisOptions.PX = options.px; // milliseconds
+    if (options?.ex) redisOptions.EX = options.ex;
+    if (options?.px) redisOptions.PX = options.px;
     if (options?.nx) redisOptions.NX = options.nx;
     if (options?.xx) redisOptions.XX = options.xx;
 
@@ -216,6 +276,11 @@ export const redis = {
     if (clientPromise) {
       try {
         const client = await clientPromise;
+        // 停止健康检查
+        if (healthCheckInterval) {
+          clearInterval(healthCheckInterval);
+          healthCheckInterval = null;
+        }
         await client.quit();
         redisClient = null;
         clientPromise = null;
@@ -225,4 +290,20 @@ export const redis = {
       }
     }
   },
+
+  // 添加重置连接方法
+  resetConnection,
 };
+
+// 处理进程退出信号
+process.on("SIGINT", async () => {
+  console.log("收到 SIGINT 信号，正在关闭 Redis 连接...");
+  await redis.quit();
+  process.exit(0);
+});
+
+process.on("SIGTERM", async () => {
+  console.log("收到 SIGTERM 信号，正在关闭 Redis 连接...");
+  await redis.quit();
+  process.exit(0);
+});

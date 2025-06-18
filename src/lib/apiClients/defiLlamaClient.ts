@@ -79,6 +79,22 @@ export interface Stablecoin {
   chains: string[];
 }
 
+// 重试函数工具
+async function withRetry<T>(
+  fn: () => Promise<T>,
+  retries = 3,
+  delay = 1000
+): Promise<T> {
+  try {
+    return await fn();
+  } catch (error) {
+    if (retries <= 0) throw error;
+    console.log(`重试操作，剩余重试次数: ${retries - 1}`);
+    await new Promise((resolve) => setTimeout(resolve, delay));
+    return withRetry(fn, retries - 1, delay * 2); // 指数退避策略
+  }
+}
+
 // DeFi Llama API Client
 export class DeFiLlamaClient {
   private readonly apiClient;
@@ -87,21 +103,26 @@ export class DeFiLlamaClient {
   constructor() {
     this.apiClient = axios.create({
       baseURL: DEFILLAMA_BASE_URL,
-      timeout: 30000, // 30-second timeout
+      timeout: 60000, // 增加到 60 秒超时
     });
     this.yieldsClient = axios.create({
       baseURL: DEFILLAMA_YIELDS_URL,
-      timeout: 30000,
+      timeout: 60000, // 增加到 60 秒超时
     });
   }
 
   // Get all protocols
   async getProtocols(): Promise<Protocol[]> {
     try {
-      const { data } = await this.apiClient.get<Protocol[]>("/protocols");
-      return data;
+      console.log("开始获取 DeFi Llama 协议数据...");
+      const result = await withRetry(async () => {
+        const { data } = await this.apiClient.get<Protocol[]>("/protocols");
+        return data;
+      });
+      console.log(`成功获取 DeFi Llama 协议数据，共 ${result.length} 个协议`);
+      return result;
     } catch (error) {
-      console.error("Failed to fetch protocols from DeFi Llama:", error);
+      console.error("在多次重试后仍无法获取 DeFi Llama 协议数据:", error);
       throw error;
     }
   }
@@ -109,10 +130,17 @@ export class DeFiLlamaClient {
   // Get all pools
   async getPools(): Promise<Pool[]> {
     try {
-      const { data } = await this.yieldsClient.get<{ data: Pool[] }>("/pools");
-      return data.data;
+      console.log("开始获取 DeFi Llama 池数据...");
+      const result = await withRetry(async () => {
+        const { data } = await this.yieldsClient.get<{ data: Pool[] }>(
+          "/pools"
+        );
+        return data.data;
+      });
+      console.log(`成功获取 DeFi Llama 池数据，共 ${result.length} 个池`);
+      return result;
     } catch (error) {
-      console.error("Failed to fetch pools from DeFi Llama:", error);
+      console.error("在多次重试后仍无法获取 DeFi Llama 池数据:", error);
       throw error;
     }
   }
@@ -120,15 +148,19 @@ export class DeFiLlamaClient {
   // Get historical data for a specific pool
   async getPoolChart(poolId: string): Promise<PoolChartData[]> {
     try {
-      const { data } = await this.yieldsClient.get<{ data: PoolChartData[] }>(
-        `/chart/${poolId}`
+      console.log(`开始获取池 ${poolId} 的历史数据...`);
+      const result = await withRetry(async () => {
+        const { data } = await this.yieldsClient.get<{ data: PoolChartData[] }>(
+          `/chart/${poolId}`
+        );
+        return data.data;
+      });
+      console.log(
+        `成功获取池 ${poolId} 的历史数据，共 ${result.length} 条记录`
       );
-      return data.data;
+      return result;
     } catch (error) {
-      console.error(
-        `Failed to fetch historical data for pool ${poolId} from DeFi Llama:`,
-        error
-      );
+      console.error(`在多次重试后仍无法获取池 ${poolId} 的历史数据:`, error);
       throw error;
     }
   }
@@ -136,12 +168,19 @@ export class DeFiLlamaClient {
   // Get all stablecoins
   async getStablecoins(): Promise<Stablecoin[]> {
     try {
-      const { data } = await this.yieldsClient.get<{
-        peggedAssets: Stablecoin[];
-      }>("/stablecoins");
-      return data.peggedAssets;
+      console.log("开始获取 DeFi Llama 稳定币数据...");
+      const result = await withRetry(async () => {
+        const { data } = await this.yieldsClient.get<{
+          peggedAssets: Stablecoin[];
+        }>("/stablecoins");
+        return data.peggedAssets;
+      });
+      console.log(
+        `成功获取 DeFi Llama 稳定币数据，共 ${result.length} 个稳定币`
+      );
+      return result;
     } catch (error) {
-      console.error("Failed to fetch stablecoins from DeFi Llama:", error);
+      console.error("在多次重试后仍无法获取 DeFi Llama 稳定币数据:", error);
       throw error;
     }
   }
