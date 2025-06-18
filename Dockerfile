@@ -9,8 +9,8 @@ COPY prisma ./prisma/
 # 安装依赖
 RUN npm ci
 
-# 生成 Prisma 客户端
-RUN npx prisma generate
+# 生成 Prisma 客户端（使用--no-engine标志避免需要数据库连接）
+RUN npx prisma generate --no-engine
 
 # 复制源代码
 COPY . .

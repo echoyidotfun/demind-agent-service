@@ -11,6 +11,17 @@ console.log({
     : undefined,
 });
 
+// 检查必要的环境变量
+if (!process.env.DATABASE_URL) {
+  console.error(
+    "错误: 缺少必要的环境变量 DATABASE_URL。请确保已在环境中设置此变量。"
+  );
+  console.error(
+    "如果在Railway中部署，请在项目设置中添加DATABASE_URL环境变量。"
+  );
+  // 我们不立即抛出错误，让应用继续启动尝试，但会在实际创建Prisma实例时失败
+}
+
 // 设置生产环境优化选项
 const prismaProductionOptions: Prisma.PrismaClientOptions = {
   log: [{ level: "error", emit: "stdout" }],
@@ -48,6 +59,13 @@ let prismaInstance: PrismaClient | undefined = undefined;
 function getPrismaInstance(): PrismaClient {
   if (!prismaInstance) {
     try {
+      // 再次检查DATABASE_URL，给出更明确的错误消息
+      if (!process.env.DATABASE_URL) {
+        throw new Error(
+          "缺少必要的DATABASE_URL环境变量。请在部署环境或.env文件中设置此变量。"
+        );
+      }
+
       console.log("创建新的 Prisma 客户端实例...");
       prismaInstance = new PrismaClient(options);
       console.log("Prisma 客户端实例创建成功");
