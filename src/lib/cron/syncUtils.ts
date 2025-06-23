@@ -96,11 +96,3 @@ export async function executeSyncTask<T>(
   }
 }
 
-/**
- * 发送错误通知（示例，未实现）
- * 在生产环境可以连接到监控系统如 Sentry、Slack 通知等
- */
-// function sendErrorNotification(taskName: string, error: unknown): void {
-//   // 实现错误通知逻辑
-//   console.error(`需要通知: ${taskName} 失败:`, error);
-// }

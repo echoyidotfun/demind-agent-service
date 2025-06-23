@@ -1,6 +1,5 @@
 import { CronJob } from "cron";
 import { DeFiLlamaSyncService } from "../../services/defiLlamaSync.service";
-import { prisma } from "../db/prismaClient";
 import { executeSyncTask } from "./syncUtils";
 
 /**

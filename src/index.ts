@@ -8,6 +8,8 @@ import {
   reportGeneralAgent,
   reportTrendingAgent,
 } from "./ai/agents/defiRadar.agent";
+import { conversationalAgent } from "./ai/agents/conversationalAgent";
+import { suggestedQuestionsAgent } from "./ai/agents/suggestedQuestionsAgent";
 import { defiRadarWorkflow } from "./ai/workflows/defiRadar.workflow";
 import { setupDefiLlamaSyncCronJobs } from "./lib/cron/defiLlamaSyncTask";
 import { setupCoinGeckoSyncCronJobs } from "./lib/cron/coingeckoSyncTask";
@@ -15,6 +17,8 @@ import { DeFiLlamaSyncService } from "./services/defiLlamaSync.service";
 import { CoinGeckoService } from "./services/coingeckoSync.service";
 import { checkPrismaConnection } from "./lib/db/prismaClient";
 import { checkRedisConnection } from "./lib/kv/redisClient";
+import conversationRouter from "./routes/conversationRoutes";
+import { smartRouter } from "./routes/smartRoutes";
 
 const defiLlamaSyncService = new DeFiLlamaSyncService();
 const coinGeckoService = new CoinGeckoService();
@@ -26,11 +30,21 @@ const mastra = new Mastra({
     intentAgent,
     reportGeneralAgent,
     reportTrendingAgent,
+    conversationalAgent,
+    suggestedQuestionsAgent,
   },
   workflows: {
     defiRadarWorkflow,
   },
 });
+
+// Make the Mastra instance available globally
+global.mastra = mastra;
+
+// This will allow typescript to know about the global Mastra instance
+declare global {
+  var mastra: Mastra;
+}
 
 // 创建 Hono 应用
 const app = new Hono();
@@ -46,7 +60,12 @@ app.use(
       process.env.NODE_ENV === "production"
         ? productionOrigins
         : developmentOrigins,
-    allowHeaders: ["Content-Type", "Authorization", "Cache-Control"],
+    allowHeaders: [
+      "Content-Type",
+      "Authorization",
+      "Cache-Control",
+      "x-user-id",
+    ],
     allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     exposeHeaders: ["Content-Type", "Content-Length"],
     maxAge: 86400,
@@ -195,6 +214,12 @@ app.get("/health/detailed", async (c) => {
 });
 
 const api = new Hono().basePath("/api/v1");
+
+// 添加会话路由
+api.route("/conversations", conversationRouter);
+
+// 添加智能路由
+api.route("/smart", smartRouter);
 
 // 存储正在运行的工作流和对应的中断控制器
 const workflowAbortControllers = new Map<string, AbortController>();
